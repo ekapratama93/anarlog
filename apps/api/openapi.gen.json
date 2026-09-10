@@ -3995,6 +3995,18 @@
                 "null"
               ]
             }
+          },
+          {
+            "name": "x-anarlog-cloudsync-transports",
+            "in": "header",
+            "description": "Comma-separated transports the client accepts; include `replica` to allow witness-only credentials",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -6069,6 +6081,9 @@
           },
           {
             "$ref": "#/components/schemas/CloudsyncCredentials"
+          },
+          {
+            "$ref": "#/components/schemas/ReplicaCredentials"
           }
         ]
       },
@@ -10610,7 +10625,10 @@
           "encryptionKeyId",
           "expiresAt",
           "workspaceId",
-          "accountUserId"
+          "accountUserId",
+          "personalWorkspaceId",
+          "workspaces",
+          "workspaceKeyGrants"
         ],
         "properties": {
           "accountUserId": {
@@ -10627,11 +10645,26 @@
           "expiresAt": {
             "type": "string"
           },
+          "personalWorkspaceId": {
+            "type": "string"
+          },
           "transport": {
             "type": "string"
           },
           "workspaceId": {
             "type": "string"
+          },
+          "workspaceKeyGrants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceE2eeKeyGrant"
+            }
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudsyncWorkspace"
+            }
           }
         }
       },

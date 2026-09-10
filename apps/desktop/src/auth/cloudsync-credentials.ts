@@ -22,21 +22,37 @@ type CloudsyncCredentialCore = E2eeCredentialCore & {
   transport?: undefined;
 };
 
-export type ReplicaCredentials = E2eeCredentialCore & {
+type WorkspaceProjectionFields = CloudsyncWorkspaceProjection & {
+  workspaceKeyGrants?: CloudsyncWorkspaceKeyGrant[];
+};
+
+type ReplicaCredentialCore = E2eeCredentialCore & {
   transport: "replica";
   accountUserId: string;
 };
+
+type PersonalReplicaCredentials = ReplicaCredentialCore & {
+  personalWorkspaceId?: undefined;
+  workspaces?: undefined;
+  workspaceKeyGrants?: undefined;
+};
+
+export type ProjectedReplicaCredentials = ReplicaCredentialCore &
+  WorkspaceProjectionFields;
+
+export type ReplicaCredentials =
+  | PersonalReplicaCredentials
+  | ProjectedReplicaCredentials;
 
 type LegacyCloudsyncCredentials = CloudsyncCredentialCore & {
   accountUserId?: undefined;
   personalWorkspaceId?: undefined;
   workspaces?: undefined;
+  workspaceKeyGrants?: undefined;
 };
 
 export type ProjectedCloudsyncCredentials = CloudsyncCredentialCore &
-  CloudsyncWorkspaceProjection & {
-    workspaceKeyGrants?: CloudsyncWorkspaceKeyGrant[];
-  };
+  WorkspaceProjectionFields;
 
 export type CloudsyncCredentials =
   | LegacyCloudsyncCredentials
@@ -45,6 +61,11 @@ export type CloudsyncCredentials =
 
 export const DEVICE_NAME_HEADER = "x-anarlog-device-name";
 export const E2EE_MEMBER_PUBLIC_KEY_HEADER = "x-anarlog-e2ee-member-public-key";
+// Tells /sync/token this build can run the witness-only replica transport for
+// every workspace, so the server may hand out replica credentials instead of a
+// sqlite-sync token. Older builds omit it and keep receiving sqlite-sync.
+export const CLOUDSYNC_TRANSPORTS_HEADER = "x-anarlog-cloudsync-transports";
+export const CLOUDSYNC_ACCEPTED_TRANSPORTS = "replica";
 export const DEVICE_LIMIT_ERROR_CODE = "sync_device_limit_reached";
 export const DEVICE_LIMIT_TOAST_ID = "cloudsync-device-limit";
 
@@ -242,10 +263,17 @@ export function isCredentials(value: unknown): value is CloudsyncCredentials {
   }
 
   if (candidate.transport === "replica") {
-    return (
-      typeof candidate.accountUserId === "string" &&
-      candidate.accountUserId === candidate.workspaceId
-    );
+    if (
+      typeof candidate.accountUserId !== "string" ||
+      candidate.accountUserId !== candidate.workspaceId
+    ) {
+      return false;
+    }
+    const projectionKeys = ["personalWorkspaceId", "workspaces"];
+    if (!projectionKeys.some((key) => key in candidate)) {
+      return true;
+    }
+    return isValidWorkspaceProjection(candidate);
   }
 
   if (
@@ -262,6 +290,12 @@ export function isCredentials(value: unknown): value is CloudsyncCredentials {
     return true;
   }
 
+  return isValidWorkspaceProjection(candidate);
+}
+
+function isValidWorkspaceProjection(
+  candidate: Record<string, unknown>,
+): boolean {
   if (
     typeof candidate.accountUserId !== "string" ||
     candidate.accountUserId.length === 0 ||
@@ -375,11 +409,8 @@ export function isCredentials(value: unknown): value is CloudsyncCredentials {
 
 export function hasWorkspaceProjection(
   credentials: CloudsyncCredentials,
-): credentials is ProjectedCloudsyncCredentials {
-  return (
-    credentials.transport !== "replica" &&
-    credentials.accountUserId !== undefined
-  );
+): credentials is ProjectedCloudsyncCredentials | ProjectedReplicaCredentials {
+  return credentials.personalWorkspaceId !== undefined;
 }
 
 export function isReplicaCredentials(

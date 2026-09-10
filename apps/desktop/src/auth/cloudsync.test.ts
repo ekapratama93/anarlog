@@ -244,6 +244,23 @@ function projectedCredentialsResponse(
   });
 }
 
+function projectedReplicaCredentialsResponse(
+  mutate?: (
+    payload: Omit<ProjectedCredentialsPayload, "databaseId" | "token">,
+  ) => void,
+) {
+  const {
+    databaseId: _databaseId,
+    token: _token,
+    ...payload
+  } = projectedCredentialsPayload();
+  mutate?.(payload);
+  return new Response(JSON.stringify({ transport: "replica", ...payload }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 describe("CloudSync auth lifecycle", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
@@ -615,6 +632,7 @@ describe("CloudSync auth lifecycle", () => {
           Authorization: "Bearer supabase-token",
           "X-Anarlog-E2EE-Key-Id": E2EE_KEY_ID,
           "x-anarlog-e2ee-member-public-key": E2EE_MEMBER_PUBLIC_KEY,
+          "x-anarlog-cloudsync-transports": "replica",
         },
       }),
     );
@@ -655,7 +673,69 @@ describe("CloudSync auth lifecycle", () => {
       new URL("https://api.test/sync/replica/credentials"),
       expect.objectContaining({ method: "POST" }),
     );
-    expect(configureE2eeReplica).toHaveBeenCalledWith("user-id", witness());
+    expect(configureE2eeReplica).toHaveBeenCalledWith(
+      "user-id",
+      witness(),
+      undefined,
+      [],
+    );
+    expect(configureCloudsyncToken).not.toHaveBeenCalled();
+  });
+
+  test("switches to the replica transport when /sync/token hands out replica credentials", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(projectedReplicaCredentialsResponse()),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await handleCloudsyncAuthChange("SIGNED_IN", session());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("https://api.test/sync/token"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-anarlog-cloudsync-transports": "replica",
+        }),
+      }),
+    );
+    expect(configureE2eeReplica).toHaveBeenCalledWith(
+      "user-id",
+      witness(),
+      {
+        accountUserId: "user-id",
+        personalWorkspaceId: "user-id",
+        workspaces: [
+          expect.objectContaining({ id: "user-id", role: "owner" }),
+          expect.objectContaining({ id: "workspace-shared", role: "member" }),
+        ],
+      },
+      [
+        expect.objectContaining({
+          workspaceId: "workspace-shared",
+          keyId: "AAAAAAAAAAAAAAAAAAAAAA",
+          isActive: true,
+        }),
+      ],
+    );
+    expect(configureCloudsyncToken).not.toHaveBeenCalled();
+  });
+
+  test("rejects replica credentials whose projection misses the personal workspace", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          projectedReplicaCredentialsResponse((payload) => {
+            payload.workspaces.splice(0, 1);
+          }),
+        ),
+      ),
+    );
+
+    await handleCloudsyncAuthChange("SIGNED_IN", session());
+
+    expect(configureE2eeReplica).not.toHaveBeenCalled();
     expect(configureCloudsyncToken).not.toHaveBeenCalled();
   });
 
@@ -1033,7 +1113,12 @@ describe("CloudSync auth lifecycle", () => {
       new URL("https://api.test/sync/replica/credentials"),
       expect.objectContaining({ method: "POST" }),
     );
-    expect(configureE2eeReplica).toHaveBeenCalledWith("user-id", witness());
+    expect(configureE2eeReplica).toHaveBeenCalledWith(
+      "user-id",
+      witness(),
+      undefined,
+      [],
+    );
     expect(configureCloudsyncToken).not.toHaveBeenCalled();
   });
 

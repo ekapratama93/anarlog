@@ -48,6 +48,15 @@ pub enum ReplicaSyncOutcome {
     Paused,
 }
 
+fn warn_parked_records(stats: &anlg_db_app::E2eeReplicaStats) {
+    if stats.parked_records > 0 {
+        tracing::warn!(
+            parked_records = stats.parked_records,
+            "parked encrypted records this build cannot apply yet; they retry after an update"
+        );
+    }
+}
+
 fn ordered_witness_workspace_ids(
     keys: &HashMap<String, anlg_e2ee::WorkspaceKeyring>,
     witnesses: &HashMap<String, E2eeWitnessClient>,
@@ -194,10 +203,14 @@ impl E2eeSyncHook {
     }
 
     pub fn set_replica_witness(&self, witness: E2eeWitnessClient) {
-        self.set_witnesses_for_transport(
-            HashMap::from([(witness.workspace_id().to_string(), witness)]),
-            E2eeTransport::Replica,
-        );
+        self.set_replica_witnesses(HashMap::from([(
+            witness.workspace_id().to_string(),
+            witness,
+        )]));
+    }
+
+    pub fn set_replica_witnesses(&self, witnesses: HashMap<String, E2eeWitnessClient>) {
+        self.set_witnesses_for_transport(witnesses, E2eeTransport::Replica);
         self.replica_sync_requested.notify_one();
     }
 
@@ -436,44 +449,45 @@ impl E2eeSyncHook {
             return Ok(ReplicaSyncOutcome::Settled);
         }
         let keys = config.keys;
-        let witness = (config.witnesses.len() == 1)
-            .then(|| config.witnesses.into_values().next())
-            .flatten();
+        let witnesses = config.witnesses;
         let active_sync = self.begin_sync();
         let cancellation = active_sync.cancellation.clone();
         let operation = async {
             cancellation.check()?;
-            let witness = witness
-                .ok_or_else(|| std::io::Error::other("E2EE replica service is not configured"))?;
-            let keyring = keys
-                .get(witness.workspace_id())
-                .ok_or_else(|| std::io::Error::other("E2EE replica identity is not configured"))?;
-            witness
-                .initialize_keyring_with_page_handler_cancellable(
-                    pool,
-                    keyring,
-                    || async {
-                        loop {
-                            cancellation.check()?;
-                            let stats = anlg_db_app::apply_received_e2ee_replica_changes_with_witness_cancellable(
-                                pool,
-                                &keys,
-                                true,
-                                || self.received_apply_cancelled(&cancellation),
-                            )
-                            .await
-                            .map_err(|error| {
-                                std::io::Error::other(format!("E2EE witness hydration failed: {error}"))
-                            })?;
-                            if !stats.remaining_replica_changes {
-                                return Ok(());
+            if witnesses.is_empty() {
+                return Err(std::io::Error::other(
+                    "E2EE replica service is not configured",
+                ));
+            }
+            let workspace_ids = ordered_witness_workspace_ids(&keys, &witnesses)?;
+            for workspace_id in &workspace_ids {
+                witnesses[workspace_id]
+                    .initialize_keyring_with_page_handler_cancellable(
+                        pool,
+                        &keys[workspace_id],
+                        || async {
+                            loop {
+                                cancellation.check()?;
+                                let stats = anlg_db_app::apply_received_e2ee_replica_changes_with_witness_cancellable(
+                                    pool,
+                                    &keys,
+                                    true,
+                                    || self.received_apply_cancelled(&cancellation),
+                                )
+                                .await
+                                .map_err(|error| {
+                                    std::io::Error::other(format!("E2EE witness hydration failed: {error}"))
+                                })?;
+                                if !stats.remaining_replica_changes {
+                                    return Ok(());
+                                }
                             }
-                        }
-                    },
-                    &cancellation,
-                )
-                .await?;
-            cancellation.check()?;
+                        },
+                        &cancellation,
+                    )
+                    .await?;
+                cancellation.check()?;
+            }
             anlg_db_app::encrypt_e2ee_replica_changes_bounded_deferring_active_captures_cancellable(
                 pool,
                 &keys,
@@ -485,17 +499,19 @@ impl E2eeSyncHook {
                 std::io::Error::other(format!("E2EE replica encryption failed: {error}"))
             })?;
             cancellation.check()?;
-            witness
-                .publish_and_refresh_notifying_cancellable(
-                    pool,
-                    keyring.active(),
-                    || {
-                        self.request_reconciliation();
-                    },
-                    &cancellation,
-                )
-                .await?;
-            cancellation.check()?;
+            for workspace_id in &workspace_ids {
+                witnesses[workspace_id]
+                    .publish_and_refresh_keyring_notifying_cancellable(
+                        pool,
+                        &keys[workspace_id],
+                        || {
+                            self.request_reconciliation();
+                        },
+                        &cancellation,
+                    )
+                    .await?;
+                cancellation.check()?;
+            }
             let reconciliation_epoch = self.request_reconciliation();
             let stats = anlg_db_app::apply_received_e2ee_replica_changes_with_witness_cancellable(
                 pool,
@@ -508,6 +524,7 @@ impl E2eeSyncHook {
                 std::io::Error::other(format!("E2EE replica application failed: {error}"))
             })?;
             cancellation.check()?;
+            warn_parked_records(&stats);
             if stats.remaining_replica_changes {
                 self.request_reconciliation();
             }
@@ -703,11 +720,13 @@ impl anlg_db_core::CloudsyncSyncHook for E2eeSyncHook {
                 } else {
                     anlg_db_app::E2eeReplicaStats::default()
                 };
+                warn_parked_records(&stats);
                 tracing::debug!(
                     applied_fields = stats.applied_fields,
                     skipped_local_changes = stats.skipped_local_changes,
                     rejected_rollbacks = stats.rejected_rollbacks,
                     rejected_unwitnessed = stats.rejected_unwitnessed,
+                    parked_records = stats.parked_records,
                     snapshot_complete,
                     "applied encrypted CloudSync replica"
                 );
