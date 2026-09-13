@@ -33,6 +33,13 @@ const mocks = vi.hoisted(() => ({
   },
   createWorkspace: vi.fn(() => Promise.resolve({ workspaceId: "ws" })),
   client: {
+    ownershipRequests: [] as Array<{
+      id: string;
+      ownerUserId: string;
+      targetUserId: string;
+    }>,
+    transferOwnership: vi.fn(() => Promise.resolve()),
+    respondOwnershipRequest: vi.fn(() => Promise.resolve()),
     access: {
       role: "owner" as const,
       tier: "team" as "free" | "team" | "enterprise",
@@ -47,6 +54,8 @@ const mocks = vi.hoisted(() => ({
     members: [] as Array<{
       userId: string;
       email: string;
+      name?: string | null;
+      avatarUrl?: string | null;
       role: "owner" | "admin" | "member";
     }>,
     invitations: [] as Array<{
@@ -92,6 +101,20 @@ const mocks = vi.hoisted(() => ({
       Promise.resolve("available" as "available" | "taken" | "invalid"),
     ),
     getWorkspaceAccess: vi.fn(),
+    acceptMyWorkspaceInvitation: vi.fn(() =>
+      Promise.resolve({ workspaceId: "ws-joined" }),
+    ),
+    declineMyWorkspaceInvitation: vi.fn(() => Promise.resolve()),
+  },
+  myInvitations: {
+    data: [] as Array<{
+      invitationId: string;
+      workspaceId: string;
+      workspaceName: string;
+      workspaceLogoDataUrl: string | null;
+      invitedByEmail: string | null;
+      expiresAt: string;
+    }>,
   },
   invitation: {
     deliverWorkspaceInvitation: vi.fn(() =>
@@ -132,6 +155,7 @@ vi.mock("@anlg/ui/components/ui/toast", () => ({
     warning: mocks.toastWarning,
     success: vi.fn(),
     error: vi.fn(),
+    dismiss: vi.fn(),
   },
 }));
 
@@ -162,6 +186,11 @@ vi.mock("./mirror", () => ({
   useMyWorkspacesWithMirror: () => mocks.workspaces,
 }));
 
+vi.mock("./my-invitations", () => ({
+  MY_INVITATIONS_QUERY_KEY: "team-my-invitations",
+  useMyWorkspaceInvitations: () => mocks.myInvitations,
+}));
+
 vi.mock("./client", () => ({
   requireTeamContext: (auth: unknown) => auth,
   createWorkspace: mocks.createWorkspace,
@@ -176,7 +205,9 @@ vi.mock("./client", () => ({
   setWorkspaceLogo: mocks.client.setWorkspaceLogo,
   revokeInvitation: mocks.client.revokeInvitation,
   setMemberRole: vi.fn(() => Promise.resolve()),
-  transferOwnership: vi.fn(() => Promise.resolve()),
+  transferOwnership: mocks.client.transferOwnership,
+  listOwnershipRequests: () => Promise.resolve(mocks.client.ownershipRequests),
+  respondOwnershipRequest: mocks.client.respondOwnershipRequest,
   getWorkspaceUsageOverview: () => Promise.resolve(mocks.client.usage),
   getWorkspaceAccess: mocks.client.getWorkspaceAccess,
   getWorkspacePolicy: mocks.client.getWorkspacePolicy,
@@ -188,6 +219,8 @@ vi.mock("./client", () => ({
     mocks.client.checkWorkspaceShareSlugAvailability,
   claimWorkspaceDomain: vi.fn(() => Promise.resolve()),
   rotateWorkspaceScimToken: vi.fn(() => Promise.resolve()),
+  acceptMyWorkspaceInvitation: mocks.client.acceptMyWorkspaceInvitation,
+  declineMyWorkspaceInvitation: mocks.client.declineMyWorkspaceInvitation,
 }));
 
 import { SettingsTeam } from "./index";
@@ -196,12 +229,16 @@ function renderTeam() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <SettingsTeam />
-    </QueryClientProvider>,
-  );
+  return {
+    invalidate,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsTeam />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 function openWorkspace(name: string) {
@@ -212,8 +249,18 @@ describe("SettingsTeam", () => {
   beforeEach(() => {
     mocks.session = { user: { id: "user-1" } };
     mocks.workspaces.data = [];
+    mocks.myInvitations.data = [];
+    mocks.client.acceptMyWorkspaceInvitation.mockReset();
+    mocks.client.acceptMyWorkspaceInvitation.mockResolvedValue({
+      workspaceId: "ws-joined",
+    });
+    mocks.client.declineMyWorkspaceInvitation.mockReset();
+    mocks.client.declineMyWorkspaceInvitation.mockResolvedValue(undefined);
     mocks.workspaces.isPending = false;
     mocks.client.members = [];
+    mocks.client.ownershipRequests = [];
+    mocks.client.transferOwnership.mockClear();
+    mocks.client.respondOwnershipRequest.mockClear();
     mocks.client.invitations = [];
     mocks.client.usage = {
       memberCount: 1,
@@ -796,6 +843,123 @@ describe("SettingsTeam", () => {
     expect(screen.getByText("SCIM bearer token")).toBeTruthy();
   });
 
+  it("shows profile details in the roster and keeps owner controls hidden", async () => {
+    mocks.workspaces.data = [
+      {
+        workspaceId: "ws",
+        name: "Fastrepl",
+        ownerUserId: "user-1",
+        role: "owner",
+      },
+    ];
+    mocks.client.members = [
+      {
+        userId: "user-1",
+        email: "owner@example.com",
+        name: "Team Owner",
+        avatarUrl: "https://example.com/owner.png",
+        role: "owner",
+      },
+      {
+        userId: "user-2",
+        email: "member@example.com",
+        name: null,
+        avatarUrl: null,
+        role: "member",
+      },
+    ];
+    renderTeam();
+    const table = await screen.findByRole("table", { name: "Members" });
+    for (const name of ["Name", "Email", "Permissions", "Actions"]) {
+      expect(within(table).getByRole("columnheader", { name })).toBeTruthy();
+    }
+    const ownerRow = within(table).getByText("Team Owner").closest("tr")!;
+    expect(within(ownerRow).getByText("owner@example.com")).toBeTruthy();
+    expect(ownerRow.querySelector("img")?.getAttribute("src")).toBe(
+      "https://example.com/owner.png",
+    );
+    expect(within(ownerRow).queryByRole("button")).toBeNull();
+    expect(
+      within(table).getByRole("combobox", {
+        name: "Permissions for member@example.com",
+      }),
+    ).toBeTruthy();
+    fireEvent.keyDown(
+      within(table).getByRole("button", {
+        name: "Actions for member@example.com",
+      }),
+      { key: "Enter" },
+    );
+    expect(screen.queryByRole("menuitem", { name: "Make owner" })).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: "Remove member" }),
+    ).toBeTruthy();
+  });
+
+  it("requires confirmation before requesting ownership from the role select", async () => {
+    mocks.workspaces.data = [
+      { workspaceId: "ws", name: "Team", ownerUserId: "user-1", role: "owner" },
+    ];
+    mocks.client.members = [
+      { userId: "user-2", email: "member@example.com", role: "admin" },
+    ];
+    renderTeam();
+    Element.prototype.scrollIntoView = vi.fn();
+    const select = await screen.findByRole("combobox", {
+      name: "Permissions for member@example.com",
+    });
+    fireEvent.keyDown(select, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Owner" }));
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Request ownership transfer?",
+      }),
+    ).toBeTruthy();
+    expect(mocks.client.transferOwnership).not.toHaveBeenCalled();
+    expect(select.textContent).toContain("Admin");
+    fireEvent.click(screen.getByRole("button", { name: "Request transfer" }));
+    await waitFor(() =>
+      expect(mocks.client.transferOwnership).toHaveBeenCalledWith(
+        expect.anything(),
+        "ws",
+        "user-2",
+      ),
+    );
+  });
+
+  it("lets a member review and accept a pending ownership request", async () => {
+    mocks.workspaces.data = [
+      {
+        workspaceId: "ws",
+        name: "Team",
+        ownerUserId: "user-2",
+        role: "member",
+      },
+    ];
+    mocks.client.ownershipRequests = [
+      { id: "request", ownerUserId: "user-2", targetUserId: "user-1" },
+    ];
+    renderTeam();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review transfer" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Accept workspace ownership?",
+      }),
+    ).toBeTruthy();
+    expect(mocks.client.respondOwnershipRequest).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Accept ownership" }));
+    await waitFor(() =>
+      expect(mocks.client.respondOwnershipRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        "ws",
+        "request",
+        "accept",
+      ),
+    );
+  });
+
   it("resends a pending invitation by delivering a fresh invite", async () => {
     mocks.workspaces.data = [
       {
@@ -815,8 +979,14 @@ describe("SettingsTeam", () => {
 
     renderTeam();
 
+    fireEvent.keyDown(
+      await screen.findByRole("button", {
+        name: "Actions for teammate@company.com",
+      }),
+      { key: "Enter" },
+    );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Resend invitation" }),
+      await screen.findByRole("menuitem", { name: "Resend invitation" }),
     );
 
     await waitFor(() =>
@@ -902,5 +1072,98 @@ describe("SettingsTeam", () => {
         "00000000-0000-4000-8000-000000000001",
       ),
     );
+  });
+
+  it("hides the invitations section when there are none", () => {
+    renderTeam();
+
+    expect(screen.queryByText("Invitations")).toBeNull();
+  });
+
+  it("lists pending invitations with the inviter and accepts one", async () => {
+    mocks.myInvitations.data = [
+      {
+        invitationId: "33333333-3333-4333-8333-333333333333",
+        workspaceId: "00000000-0000-4000-8000-000000000009",
+        workspaceName: "Fastrepl",
+        workspaceLogoDataUrl: null,
+        invitedByEmail: "owner@example.com",
+        expiresAt: "2026-09-01T00:00:00Z",
+      },
+    ];
+    mocks.client.acceptMyWorkspaceInvitation.mockResolvedValue({
+      workspaceId: "00000000-0000-4000-8000-000000000009",
+    });
+
+    const { invalidate } = renderTeam();
+
+    expect(screen.getByText("Fastrepl")).toBeTruthy();
+    expect(screen.getByText("Invited by owner@example.com")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+
+    await waitFor(() =>
+      expect(mocks.client.acceptMyWorkspaceInvitation).toHaveBeenCalledWith(
+        expect.anything(),
+        "33333333-3333-4333-8333-333333333333",
+      ),
+    );
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["team-workspaces"],
+      }),
+    );
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["team-my-invitations"],
+    });
+  });
+
+  it("declines a pending invitation", async () => {
+    mocks.myInvitations.data = [
+      {
+        invitationId: "33333333-3333-4333-8333-333333333333",
+        workspaceId: "00000000-0000-4000-8000-000000000009",
+        workspaceName: "Fastrepl",
+        workspaceLogoDataUrl: null,
+        invitedByEmail: null,
+        expiresAt: "2026-09-01T00:00:00Z",
+      },
+    ];
+
+    const { invalidate } = renderTeam();
+
+    expect(screen.getByText("Invited to join")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+
+    await waitFor(() =>
+      expect(mocks.client.declineMyWorkspaceInvitation).toHaveBeenCalledWith(
+        expect.anything(),
+        "33333333-3333-4333-8333-333333333333",
+      ),
+    );
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["team-my-invitations"],
+      }),
+    );
+  });
+
+  it("shows invitations even when the account has no workspaces", () => {
+    mocks.myInvitations.data = [
+      {
+        invitationId: "33333333-3333-4333-8333-333333333333",
+        workspaceId: "00000000-0000-4000-8000-000000000009",
+        workspaceName: "Fastrepl",
+        workspaceLogoDataUrl: null,
+        invitedByEmail: "owner@example.com",
+        expiresAt: "2026-09-01T00:00:00Z",
+      },
+    ];
+
+    renderTeam();
+
+    expect(screen.getByText("Invitations")).toBeTruthy();
+    expect(screen.getByText("Fastrepl")).toBeTruthy();
+    expect(screen.getByText("Create a shared workspace")).toBeTruthy();
   });
 });

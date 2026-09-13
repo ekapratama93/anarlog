@@ -762,3 +762,72 @@ fn live_transcript_delta_keeps_speaker_index_on_words() {
     assert_eq!(converted.partials[0].speaker_index, Some(2));
     assert_eq!(converted.replaced_ids, vec!["replaced"]);
 }
+
+#[test]
+fn nari_completed_utterances_finalize_immediately_without_waiting_for_flush() {
+    let mut engine = LiveTranscriptEngine::new("nari", &[], None);
+    for (start, text) in [(0.0, "First answer"), (1.0, "Second answer")] {
+        let preview = transcript_response_at(
+            "provisional",
+            vec![word("provisional", start, start + 1.0)],
+            false,
+            0,
+            start,
+            1.0,
+        );
+        assert!(
+            engine
+                .process(&preview)
+                .unwrap()
+                .transcript_delta
+                .new_words
+                .is_empty()
+        );
+        let completed = transcript_response_at(
+            text,
+            vec![word(text, start, start + 1.0)],
+            true,
+            0,
+            start,
+            1.0,
+        );
+        let update = engine
+            .process(&completed)
+            .expect("completed utterance delta");
+        assert_eq!(update.transcript_delta.new_words.len(), 1);
+        assert_eq!(update.transcript_delta.new_words[0].text.trim(), text);
+        assert!(update.transcript_delta.partials.is_empty());
+        assert!(engine.process(&completed).is_none());
+    }
+    assert!(engine.flush().is_none());
+}
+
+#[test]
+fn nari_empty_final_clears_only_its_preview_and_never_persists_unconfirmed_text() {
+    let mut engine = LiveTranscriptEngine::new("nari", &[], None);
+    let first = transcript_response_at(
+        "discard this",
+        vec![word("discard this", 0.0, 1.0)],
+        false,
+        0,
+        0.0,
+        1.0,
+    );
+    engine.process(&first).unwrap();
+    let second = transcript_response_at(
+        "still pending",
+        vec![word("still pending", 2.0, 3.0)],
+        false,
+        0,
+        2.0,
+        1.0,
+    );
+    engine.process(&second).unwrap();
+    let empty = transcript_response_at("", vec![], true, 0, 0.0, 1.0);
+    let update = engine.process(&empty).unwrap();
+    assert!(update.transcript_delta.new_words.is_empty());
+    assert_eq!(update.transcript_delta.partials.len(), 1);
+    assert_eq!(update.transcript_delta.partials[0].text, "still pending");
+    let flushed = engine.flush();
+    assert!(flushed.is_none_or(|update| update.transcript_delta.new_words.is_empty()));
+}
