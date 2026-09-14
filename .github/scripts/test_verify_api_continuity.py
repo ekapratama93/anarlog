@@ -16,7 +16,7 @@ with patch.dict(
     import verify_api_continuity as verify
 
 
-A = "registry.fly.io/anarlog-ai@sha256:" + "a" * 64
+A = "registry.fly.io/anarlog-gateway@sha256:" + "a" * 64
 B = "registry.fly.io/anarlog-core@sha256:" + "b" * 64
 
 
@@ -44,6 +44,7 @@ class ContinuityTests(unittest.IsolatedAsyncioTestCase):
 
         class Traffic:
             def __init__(self, *args, **kwargs):
+                assert args[0] == "https://anarlog-gateway.fly.dev"
                 self.streams = []
                 self.errors = []
                 self.llms = self.health = self.business_reads = 1
@@ -85,7 +86,7 @@ class ContinuityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.json"
             args = SimpleNamespace(
-                app="anarlog-ai",
+                app="anarlog-gateway",
                 config="apps/api/fly.gateway.toml",
                 dockerfile="unused",
                 version="test",

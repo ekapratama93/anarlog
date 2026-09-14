@@ -1,4 +1,5 @@
 mod auth;
+mod billing_webhook;
 mod env;
 mod observability;
 mod openapi;
@@ -133,6 +134,7 @@ async fn app_with_session_gate(
         service,
         integrations_configured: env.nango.is_some(),
         billing_configured: env.subscription.is_some(),
+        billing_webhooks: env.anarlog_billing_webhooks,
         cloudsync_configured: service.includes(Service::Sync)
             && anlg_api_sync::SyncConfig::from_env(
                 &env.sync,
@@ -455,6 +457,7 @@ struct SubsystemHealthState {
     service: Service,
     integrations_configured: bool,
     billing_configured: bool,
+    billing_webhooks: bool,
     cloudsync_configured: bool,
     transcription_configured: bool,
     llm_configured: bool,
@@ -478,7 +481,12 @@ async fn service_readiness(
                 && state.billing_configured
         }
     };
-    let ready = expected == state.service.name() && configured && !state.session_gate.is_draining();
+    let webhook_ready = !state.billing_webhooks || billing_webhook::ready().await;
+    let expected_role = expected == state.service.name()
+        || (expected == "billing-unified"
+            && state.service == Service::Billing
+            && state.billing_webhooks);
+    let ready = expected_role && configured && webhook_ready && !state.session_gate.is_draining();
     subsystem_health_response(
         ready,
         serde_json::json!({
@@ -486,6 +494,7 @@ async fn service_readiness(
             "service": state.service,
             "version": option_env!("APP_VERSION").unwrap_or("unknown"),
             "configured": configured,
+            "webhook_ready": webhook_ready,
             "draining": state.session_gate.is_draining(),
         }),
     )

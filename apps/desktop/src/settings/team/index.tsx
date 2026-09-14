@@ -516,8 +516,6 @@ function WorkspacePanel({
   const hasPaidWorkspacePlan =
     access.data?.tier === "team" || access.data?.tier === "enterprise";
 
-  // The roster, invitation, and seat RPCs are manager-only, so a plain member
-  // gets a permission error rather than data. Retrying cannot fix that.
   const members = useQuery({
     queryKey: ["team-members", workspaceId],
     queryFn: () => listWorkspaceMembers(requireTeamContext(auth), workspaceId),
@@ -537,6 +535,7 @@ function WorkspacePanel({
     queryFn: () =>
       listWorkspaceInvitations(requireTeamContext(auth), workspaceId),
     retry: false,
+    enabled: isManager,
   });
   const usage = useQuery({
     queryKey: ["team-usage", workspaceId],
@@ -870,12 +869,23 @@ function WorkspacePanel({
         {members.isPending ? (
           <TeamSkeleton />
         ) : members.isError ? (
-          <p className="text-muted-foreground text-sm">
-            <Trans>
-              Only workspace admins can see who has access. You are a member of
-              this workspace.
-            </Trans>
-          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-muted-foreground text-sm">
+              <Trans>Could not load workspace members.</Trans>
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={members.isFetching}
+              onClick={() => void members.refetch()}
+            >
+              {members.isFetching ? (
+                <CircleNotch className="size-4 animate-spin" />
+              ) : null}
+              <Trans>Try again</Trans>
+            </Button>
+          </div>
         ) : (
           <div className="border-border overflow-x-auto rounded-lg border">
             <table
@@ -927,69 +937,70 @@ function WorkspacePanel({
                     }}
                   />
                 ))}
-                {invitations.data?.map((invitation) => (
-                  <tr key={invitation.invitationId}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <Avatar
-                          seed={invitation.email}
-                          label={invitation.email}
-                          size={32}
-                          className="rounded-full"
-                        />
-                        <span className="text-muted-foreground whitespace-nowrap">
-                          <Trans>Invitation pending</Trans>
-                        </span>
-                      </div>
-                    </td>
-                    <td className="text-muted-foreground px-4 py-3">
-                      {invitation.email}
-                    </td>
-                    <td className="text-muted-foreground px-4 py-3">—</td>
-                    <td className="px-4 py-3">
-                      {isManager ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="size-8"
-                              aria-label={t`Actions for ${invitation.email}`}
-                              disabled={
-                                resendInvite.isPending || cancelInvite.isPending
-                              }
-                            >
-                              <DotsThree className="size-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {canManageMembers ? (
-                              <DropdownMenuItem
-                                onSelect={() =>
-                                  resendInvite.mutate({
-                                    email: invitation.email,
-                                  })
+                {isManager
+                  ? invitations.data?.map((invitation) => (
+                      <tr key={invitation.invitationId}>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar
+                              seed={invitation.email}
+                              label={invitation.email}
+                              size={32}
+                              className="rounded-full"
+                            />
+                            <span className="text-muted-foreground whitespace-nowrap">
+                              <Trans>Invitation pending</Trans>
+                            </span>
+                          </div>
+                        </td>
+                        <td className="text-muted-foreground px-4 py-3">
+                          {invitation.email}
+                        </td>
+                        <td className="text-muted-foreground px-4 py-3">—</td>
+                        <td className="px-4 py-3">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="size-8"
+                                aria-label={t`Actions for ${invitation.email}`}
+                                disabled={
+                                  resendInvite.isPending ||
+                                  cancelInvite.isPending
                                 }
                               >
-                                <PaperPlaneTilt className="size-4" />
-                                <Trans>Resend invitation</Trans>
+                                <DotsThree className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {canManageMembers ? (
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    resendInvite.mutate({
+                                      email: invitation.email,
+                                    })
+                                  }
+                                >
+                                  <PaperPlaneTilt className="size-4" />
+                                  <Trans>Resend invitation</Trans>
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onSelect={() =>
+                                  cancelInvite.mutate(invitation.invitationId)
+                                }
+                              >
+                                <Trash className="size-4" />
+                                <Trans>Cancel invitation</Trans>
                               </DropdownMenuItem>
-                            ) : null}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onSelect={() =>
-                                cancelInvite.mutate(invitation.invitationId)
-                              }
-                            >
-                              <Trash className="size-4" />
-                              <Trans>Cancel invitation</Trans>
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                      </tr>
+                    ))
+                  : null}
               </tbody>
             </table>
           </div>

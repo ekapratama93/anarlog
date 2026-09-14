@@ -86,16 +86,16 @@ def test_checks_passing_requires_every_reported_check():
 
 
 def test_image_ref_uses_the_fly_registry_tag():
-    first = image_ref("anarlog-ai", "1.4.14")
-    second = image_ref("anarlog-ai", "1.4.14")
-    assert first.startswith("registry.fly.io/anarlog-ai:api-1.4.14-")
+    first = image_ref("anarlog-gateway", "1.4.14")
+    second = image_ref("anarlog-gateway", "1.4.14")
+    assert first.startswith("registry.fly.io/anarlog-gateway:api-1.4.14-")
     assert first != second
     with (
         patch.object(deploy_api_drain, "fly") as build,
         patch.dict(deploy_api_drain.os.environ, {"GITHUB_SHA": "test-source"}),
     ):
         image = deploy_api_drain.build_and_push_image(
-            "anarlog-ai", "config", "Dockerfile", "1.4.14"
+            "anarlog-gateway", "config", "Dockerfile", "1.4.14"
         )
     args = build.call_args.args
     assert args[args.index("--image-label") + 1] == image.rsplit(":", 1)[1]
@@ -116,7 +116,7 @@ def test_replacement_config_updates_image_without_mutating_source():
     machine = {
         "id": "old",
         "config": {
-            "image": "registry.fly.io/anarlog-ai:old",
+            "image": "registry.fly.io/anarlog-gateway:old",
             "metadata": {
                 "fly_cordoned": "true",
                 "fly_process_group": "app",
@@ -126,12 +126,12 @@ def test_replacement_config_updates_image_without_mutating_source():
 
     config = replacement_config(
         machine,
-        "registry.fly.io/anarlog-ai:new",
+        "registry.fly.io/anarlog-gateway:new",
         {"signal": "SIGTERM", "timeout": "300s"},
         drain_supported=True,
     )
 
-    assert config["image"] == "registry.fly.io/anarlog-ai:new"
+    assert config["image"] == "registry.fly.io/anarlog-gateway:new"
     assert config["metadata"] == {
         "anarlog_drain_protocol": "sigusr1-v1",
         "fly_process_group": "app",
@@ -139,7 +139,7 @@ def test_replacement_config_updates_image_without_mutating_source():
     assert config["restart"] == {"policy": "on-failure"}
     assert config["stop_config"] == {"signal": "SIGTERM", "timeout": "300s"}
     assert supports_session_drain({"config": config})
-    assert machine["config"]["image"] == "registry.fly.io/anarlog-ai:old"
+    assert machine["config"]["image"] == "registry.fly.io/anarlog-gateway:old"
     assert machine["config"]["metadata"]["fly_cordoned"] == "true"
 
 
@@ -147,7 +147,7 @@ def test_replacement_config_rejects_volume_mounts():
     machine = {
         "id": "old",
         "config": {
-            "image": "registry.fly.io/anarlog-ai:old",
+            "image": "registry.fly.io/anarlog-gateway:old",
             "mounts": [{"volume": "vol_123", "path": "/data"}],
         },
     }
@@ -155,7 +155,7 @@ def test_replacement_config_rejects_volume_mounts():
     try:
         replacement_config(
             machine,
-            "registry.fly.io/anarlog-ai:new",
+            "registry.fly.io/anarlog-gateway:new",
             {"signal": "SIGTERM", "timeout": "300s"},
         )
     except DeployError as error:
@@ -168,13 +168,13 @@ def test_replacement_config_rejects_unhealthy_hosts():
     machine = {
         "id": "old",
         "host_status": "unreachable",
-        "config": {"image": "registry.fly.io/anarlog-ai:old"},
+        "config": {"image": "registry.fly.io/anarlog-gateway:old"},
     }
 
     try:
         replacement_config(
             machine,
-            "registry.fly.io/anarlog-ai:new",
+            "registry.fly.io/anarlog-gateway:new",
             {"signal": "SIGTERM", "timeout": "300s"},
         )
     except DeployError as error:
@@ -187,7 +187,7 @@ def test_create_replacement_starts_cordoned_in_the_source_region():
     machine = {
         "id": "old",
         "region": "sjc",
-        "config": {"image": "registry.fly.io/anarlog-ai:old"},
+        "config": {"image": "registry.fly.io/anarlog-gateway:old"},
     }
     calls = []
 
@@ -197,9 +197,9 @@ def test_create_replacement_starts_cordoned_in_the_source_region():
 
     with patch.object(deploy_api_drain, "api_request", fake_api_request):
         created = create_replacement_machine(
-            "anarlog-ai",
+            "anarlog-gateway",
             machine,
-            "registry.fly.io/anarlog-ai:new",
+            "registry.fly.io/anarlog-gateway:new",
             {"signal": "SIGTERM", "timeout": "300s"},
             drain_supported=True,
         )
@@ -208,10 +208,10 @@ def test_create_replacement_starts_cordoned_in_the_source_region():
     assert calls == [
         (
             "POST",
-            "/apps/anarlog-ai/machines",
+            "/apps/anarlog-gateway/machines",
             {
                 "config": {
-                    "image": "registry.fly.io/anarlog-ai:new",
+                    "image": "registry.fly.io/anarlog-gateway:new",
                     "metadata": {
                         "anarlog_drain_protocol": "sigusr1-v1",
                     },
@@ -230,7 +230,7 @@ def test_create_replacement_retries_until_image_manifest_is_available():
     machine = {
         "id": "old",
         "region": "sjc",
-        "config": {"image": "registry.fly.io/anarlog-ai:old"},
+        "config": {"image": "registry.fly.io/anarlog-gateway:old"},
     }
     calls = []
 
@@ -248,9 +248,9 @@ def test_create_replacement_retries_until_image_manifest_is_available():
         patch.object(deploy_api_drain.time, "sleep") as sleep,
     ):
         created = create_replacement_machine(
-            "anarlog-ai",
+            "anarlog-gateway",
             machine,
-            "registry.fly.io/anarlog-ai:new",
+            "registry.fly.io/anarlog-gateway:new",
             {"signal": "SIGTERM", "timeout": "300s"},
         )
 
@@ -267,7 +267,7 @@ def test_validate_serving_set_requires_cordoned_replacements():
 
     with patch.object(deploy_api_drain, "list_machines", lambda _app: machines):
         try:
-            validate_serving_set("anarlog-ai", {"old"}, {"new"})
+            validate_serving_set("anarlog-gateway", {"old"}, {"new"})
         except DeployError as error:
             assert "not safely cordoned" in str(error)
         else:
@@ -290,7 +290,7 @@ def test_cut_over_registers_new_machines_before_cordoning_old_machines():
         ),
     ):
         cut_over(
-            "anarlog-ai",
+            "anarlog-gateway",
             ["old-a", "old-b"],
             ["new-a", "new-b"],
             propagation_seconds=0,
@@ -332,7 +332,7 @@ def test_cut_over_drains_an_attempted_replacement_when_activation_fails():
     ):
         try:
             cut_over(
-                "anarlog-ai",
+                "anarlog-gateway",
                 ["old"],
                 ["new"],
                 propagation_seconds=0,
@@ -361,12 +361,12 @@ def test_cut_over_never_signals_an_unverified_replacement():
         patch.object(deploy_api_drain, "destroy_machine") as destroy,
     ):
         try:
-            cut_over("anarlog-ai", ["old"], ["new"], propagation_seconds=0)
+            cut_over("anarlog-gateway", ["old"], ["new"], propagation_seconds=0)
         except DeployError:
             pass
         else:
             raise AssertionError("Expected failed activation")
-        cordon.assert_called_once_with("anarlog-ai", "new")
+        cordon.assert_called_once_with("anarlog-gateway", "new")
         signal.assert_not_called()
         destroy.assert_not_called()
 
@@ -399,7 +399,7 @@ def test_cut_over_restores_old_routing_before_draining_replacements():
     ):
         try:
             cut_over(
-                "anarlog-ai",
+                "anarlog-gateway",
                 ["old"],
                 ["new"],
                 propagation_seconds=0,
@@ -476,7 +476,7 @@ def test_partial_replacement_failure_destroys_created_machines():
         patch.object(
             deploy_api_drain,
             "build_and_push_image",
-            return_value="registry.fly.io/anarlog-ai:new",
+            return_value="registry.fly.io/anarlog-gateway:new",
         ),
         patch.object(
             deploy_api_drain,
@@ -492,7 +492,7 @@ def test_partial_replacement_failure_destroys_created_machines():
     ):
         try:
             deploy_api_drain.deploy(
-                "anarlog-ai",
+                "anarlog-gateway",
                 "apps/api/fly.toml",
                 "apps/api/Dockerfile",
                 "1.4.14",
@@ -550,7 +550,7 @@ def test_drain_only_signals_machines_with_protocol_support():
         ),
     ):
         deploy_api_drain.drain_old_machines(
-            "anarlog-ai",
+            "anarlog-gateway",
             ["legacy", "supported", "stopped"],
         )
 
@@ -585,7 +585,7 @@ def test_resume_only_signals_supported_draining_machines():
             side_effect=lambda _app, machine_id: signaled.append(machine_id),
         ),
     ):
-        deploy_api_drain.resume_draining_machines("anarlog-ai")
+        deploy_api_drain.resume_draining_machines("anarlog-gateway")
 
     assert signaled == ["supported"]
 
@@ -600,7 +600,7 @@ def test_drain_leaves_already_stopping_cordoned_machines_alone():
         patch.object(deploy_api_drain, "signal_machine") as signal,
         patch.object(deploy_api_drain, "destroy_machine") as destroy,
     ):
-        deploy_api_drain.drain_old_machines("anarlog-ai", ["old"])
+        deploy_api_drain.drain_old_machines("anarlog-gateway", ["old"])
 
     signal.assert_not_called()
     destroy.assert_not_called()
@@ -613,7 +613,7 @@ def test_drain_rejects_unexpected_machine_states():
     ):
         with patch.object(deploy_api_drain, "get_machine", return_value=machine):
             try:
-                deploy_api_drain.drain_old_machines("anarlog-ai", ["old"])
+                deploy_api_drain.drain_old_machines("anarlog-gateway", ["old"])
             except DeployError as error:
                 assert f"old is {machine['state']}" in str(error)
             else:
@@ -621,7 +621,9 @@ def test_drain_rejects_unexpected_machine_states():
 
 
 def test_desired_runtime_replaces_stale_machine_settings():
-    desired = deploy_api_drain.desired_runtime_config("anarlog-ai", "apps/api/fly.toml")
+    desired = deploy_api_drain.desired_runtime_config(
+        "anarlog-gateway", "apps/api/fly.toml"
+    )
     old = {
         "id": "old",
         "config": {
@@ -691,9 +693,9 @@ def test_drain_adoption_only_marks_the_verified_image():
         mark.assert_called_once_with("anarlog-inference", "verified")
 
 
-def test_stripe_replacement_migrates_process_group_and_keeps_capacity():
+def test_billing_replacement_migrates_process_group_and_keeps_capacity():
     desired = deploy_api_drain.desired_runtime_config(
-        "hyprnote-stripe", "apps/stripe/fly.toml"
+        "anarlog-billing-api", "apps/api/fly.billing.toml"
     )
     old = {"config": {"metadata": {"fly_process_group": "web", "custom": "keep"}}}
     result = replacement_config(old, "new", {"signal": "SIGTERM"}, desired)
@@ -701,16 +703,16 @@ def test_stripe_replacement_migrates_process_group_and_keeps_capacity():
     assert result["metadata"]["custom"] == "keep"
     assert old["config"]["metadata"]["fly_process_group"] == "web"
     (service,) = result["services"]
-    assert service["internal_port"] == 8080
+    assert service["internal_port"] == 3001
     assert service["min_machines_running"] == 2
     assert service["autostop"] == "off"
-    assert service["checks"][0]["path"] == "/health"
+    assert service["checks"][0]["path"] == "/health/ready/billing-unified"
 
 
 def test_invalid_config_fails_before_any_machine_mutation():
     base = Path("apps/api/fly.toml").read_text()
     invalid_configs = [
-        base.replace("anarlog-ai", "different-app"),
+        base.replace("anarlog-gateway", "different-app"),
         base + "\n[deploy]\nrelease_command = 'unsafe-migration'\n",
         base.replace(
             "internal_port = 3001", "internal_port = 3001\nunknown_setting = true"
@@ -726,7 +728,9 @@ def test_invalid_config_fails_before_any_machine_mutation():
             config.write(invalid)
             config.flush()
             try:
-                deploy_api_drain.deploy("anarlog-ai", config.name, "Dockerfile", "test")
+                deploy_api_drain.deploy(
+                    "anarlog-gateway", config.name, "Dockerfile", "test"
+                )
             except DeployError:
                 pass
             else:
@@ -735,12 +739,22 @@ def test_invalid_config_fails_before_any_machine_mutation():
             fly.assert_not_called()
 
 
+def test_billing_replacements_use_the_image_entrypoint():
+    runtime = deploy_api_drain.desired_runtime_config(
+        "anarlog-billing-api", "apps/api/fly.billing.toml"
+    )
+    for override in ["exec", "cmd", "entrypoint"]:
+        old = {"config": {"init": {override: ["/usr/local/bin/api"]}}}
+        new = replacement_config(old, "combined-image", {}, runtime)
+        assert new["init"] == {"swap_size_mb": 512}
+
+
 def test_standalone_profiles_have_role_checks_and_no_duplicate_cleanup():
     for role, app, health in [
         ("ai", "anarlog-inference", "ai"),
         ("sync", "anarlog-sync", "sync"),
         ("core", "anarlog-core", "core"),
-        ("billing", "anarlog-billing-api", "billing-api"),
+        ("billing", "anarlog-billing-api", "billing-unified"),
     ]:
         config = deploy_api_drain.desired_runtime_config(
             app, f"apps/api/fly.{role}.toml"
@@ -762,10 +776,10 @@ def test_cutover_preflight_rechecks_candidate_readiness():
         patch.object(deploy_api_drain, "get_machine") as get,
     ):
         get.return_value = {"state": "started", "checks": [{"status": "passing"}]}
-        validate_serving_set("anarlog-ai", {"old"}, {"new"})
+        validate_serving_set("anarlog-gateway", {"old"}, {"new"})
         get.return_value = {"state": "started", "checks": [{"status": "critical"}]}
         try:
-            validate_serving_set("anarlog-ai", {"old"}, {"new"})
+            validate_serving_set("anarlog-gateway", {"old"}, {"new"})
         except DeployError as error:
             assert "lost readiness" in str(error)
         else:
@@ -1070,12 +1084,14 @@ def test_adoption_of_a_verified_candidate_requires_the_exact_digest():
         patch.object(deploy_api_drain, "mark_drain_supported") as mark,
     ):
         deploy_api_drain.adopt_drain_image(
-            "anarlog-ai", digest, "registry.fly.io/anarlog-core@" + digest
+            "anarlog-gateway", digest, "registry.fly.io/anarlog-core@" + digest
         )
         mark.assert_not_called()
         try:
             deploy_api_drain.adopt_drain_image(
-                "anarlog-ai", digest, "registry.fly.io/anarlog-core@sha256:" + "b" * 64
+                "anarlog-gateway",
+                digest,
+                "registry.fly.io/anarlog-core@sha256:" + "b" * 64,
             )
         except DeployError:
             pass
@@ -1117,10 +1133,11 @@ if __name__ == "__main__":
     test_idle_legacy_stripe_retirement_requires_cordon_and_healthy_capacity()
     test_bootstrap_marks_healthy_machines_for_future_drains()
     test_drain_adoption_only_marks_the_verified_image()
-    test_stripe_replacement_migrates_process_group_and_keeps_capacity()
+    test_billing_replacement_migrates_process_group_and_keeps_capacity()
     test_rollback_requires_an_immutable_api_image_before_mutating_machines()
     test_deploy_restores_minimum_primary_region_capacity()
     test_cutover_preflight_rechecks_candidate_readiness()
+    test_billing_replacements_use_the_image_entrypoint()
     test_standalone_profiles_have_role_checks_and_no_duplicate_cleanup()
     test_desired_runtime_replaces_stale_machine_settings()
     test_invalid_config_fails_before_any_machine_mutation()

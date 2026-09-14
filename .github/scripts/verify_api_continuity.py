@@ -353,10 +353,10 @@ async def verify_isolated_drain(args, token, audio, *, stop_timeout=90):
 
 
 async def run(args):
-    if args.app not in {"anarlog-inference", "anarlog-ai"}:
+    if args.app not in {"anarlog-inference", "anarlog-gateway", "anarlog-ai"}:
         raise RuntimeError("Continuity QA supports the AI runtime and Anarlog gateway")
     if not re.fullmatch(
-        r"registry\.fly\.io/(anarlog-ai|anarlog-inference|anarlog-core|anarlog-sync|anarlog-billing-api|hyprnote-ai)@sha256:[0-9a-f]{64}",
+        r"registry\.fly\.io/(anarlog-gateway|anarlog-ai|anarlog-inference|anarlog-core|anarlog-sync|anarlog-billing-api|hyprnote-ai)@sha256:[0-9a-f]{64}",
         args.image,
     ):
         raise RuntimeError("Continuity QA requires an immutable API image")
@@ -408,8 +408,8 @@ async def run(args):
     rollback_file = tempfile.NamedTemporaryFile(mode="w", suffix=".toml")
     rollback_file.write(deploy.rollback_health_config(args.config, originals[0]))
     rollback_file.flush()
-    gateway = args.app == "anarlog-ai"
-    base = "https://api.anarlog.so" if gateway else "https://anarlog-inference.fly.dev"
+    gateway = args.app in {"anarlog-gateway", "anarlog-ai"}
+    base = getattr(args, "base_url", None) or f"https://{args.app}.fly.dev"
     traffic = Traffic(base, token, audio, gateway=gateway)
     monitor = asyncio.create_task(traffic.requests())
     result = {
@@ -510,6 +510,16 @@ if __name__ == "__main__":
         "output",
     ]:
         parser.add_argument("--" + name, required=True)
+    parser.add_argument(
+        "--base-url",
+        choices=[
+            "https://api.anarlog.so",
+            "https://anarlog-gateway.fly.dev",
+            "https://anarlog-ai.fly.dev",
+            "https://anarlog-inference.fly.dev",
+        ],
+        help="Traffic origin; defaults to the selected app before custom-domain cutover",
+    )
     parser.add_argument("--verified-image-digest")
     parser.add_argument("--rollback-image")
     parser.add_argument("--isolated-drain-only", action="store_true")

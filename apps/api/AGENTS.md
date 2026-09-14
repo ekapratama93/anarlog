@@ -24,8 +24,17 @@ second secret path.
 | `core` | Nango and integration APIs, account deletion, SCIM |
 | `billing` | Trial/subscription API under the existing `/subscription`, `/rpc`, and `/billing` aliases |
 
-Stripe webhook processing remains in `apps/stripe`; the Rust billing runtime
-is the extracted subscription API, not a replacement for that webhook handler.
+The billing image uses the `billing-runtime` Docker target: one Machine runs
+the Rust API and the existing `apps/stripe` webhook handler and seat worker.
+Rust exposes `/webhook/stripe`, preserving signed bytes through a loopback hop
+to port 8788. Only the billing role may enable `ANARLOG_BILLING_WEBHOOKS`.
+Readiness at `/health/ready/billing-unified` requires the local webhook listener.
+The deployment profile deliberately uses that path so pre-consolidation Rust-only
+images cannot pass readiness during rollback. Retain a known combined billing
+image for rollback after moving the Stripe destination. The Bun supervisor drains Rust
+requests before stopping webhooks and awaiting claimed seat work.
+Billing secrets include DATABASE_URL and STRIPE_WEBHOOK_SECRET from
+`/anarlog/stripe-sync`; LOOPS_API_KEY comes from the API view LOOPS_KEY.
 Core retains the existing subscription configuration for account deletion and SCIM.
 
 All roles require Supabase configuration. Only `ai` and `all` require
@@ -40,7 +49,7 @@ existing URLs working while clients and webhook providers migrate.
 Standalone profiles are `fly.ai.toml` (`anarlog-inference`),
 `fly.sync.toml` (`anarlog-sync`), `fly.core.toml` (`anarlog-core`), and
 `fly.billing.toml` (`anarlog-billing-api`). The default `fly.toml` and
-`fly.gateway.toml` route public and legacy custom domains through `anarlog-ai`
+`fly.gateway.toml` route public and legacy custom domains through `anarlog-gateway`
 to these services. Keep domain certificates and DNS routing on this shared gateway.
 Core owns durable cleanup; other profiles disable it. Never transfer cleanup
 ownership until the previous owner's worker has stopped.

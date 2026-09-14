@@ -101,6 +101,8 @@ const mocks = vi.hoisted(() => ({
       Promise.resolve("available" as "available" | "taken" | "invalid"),
     ),
     getWorkspaceAccess: vi.fn(),
+    listWorkspaceMembers: vi.fn(),
+    listWorkspaceInvitations: vi.fn(),
     acceptMyWorkspaceInvitation: vi.fn(() =>
       Promise.resolve({ workspaceId: "ws-joined" }),
     ),
@@ -198,8 +200,8 @@ vi.mock("./client", () => ({
   getSeatUsage: () =>
     Promise.resolve({ seatLimit: null, usedSeats: 1, isBilled: false }),
   leaveWorkspace: vi.fn(() => Promise.resolve()),
-  listWorkspaceInvitations: () => Promise.resolve(mocks.client.invitations),
-  listWorkspaceMembers: () => Promise.resolve(mocks.client.members),
+  listWorkspaceInvitations: mocks.client.listWorkspaceInvitations,
+  listWorkspaceMembers: mocks.client.listWorkspaceMembers,
   removeMember: vi.fn(() => Promise.resolve()),
   renameWorkspace: mocks.client.renameWorkspace,
   setWorkspaceLogo: mocks.client.setWorkspaceLogo,
@@ -290,6 +292,14 @@ describe("SettingsTeam", () => {
     mocks.client.getWorkspaceAccess.mockReset();
     mocks.client.getWorkspaceAccess.mockImplementation(() =>
       Promise.resolve(mocks.client.access),
+    );
+    mocks.client.listWorkspaceMembers.mockReset();
+    mocks.client.listWorkspaceMembers.mockImplementation(() =>
+      Promise.resolve(mocks.client.members),
+    );
+    mocks.client.listWorkspaceInvitations.mockReset();
+    mocks.client.listWorkspaceInvitations.mockImplementation(() =>
+      Promise.resolve(mocks.client.invitations),
     );
     mocks.client.revokeInvitation.mockClear();
     mocks.client.deleteWorkspace.mockClear();
@@ -894,6 +904,75 @@ describe("SettingsTeam", () => {
     expect(
       screen.getByRole("menuitem", { name: "Remove member" }),
     ).toBeTruthy();
+  });
+
+  it("lets ordinary members see the roster without management controls", async () => {
+    mocks.workspaces.data = [
+      {
+        workspaceId: "ws",
+        name: "Team",
+        ownerUserId: "user-2",
+        role: "member",
+      },
+    ];
+    mocks.client.access.tier = "free";
+    mocks.client.access.capabilities = [];
+    mocks.client.members = [
+      {
+        userId: "user-2",
+        email: "owner@example.com",
+        name: "Team Owner",
+        role: "owner",
+      },
+      { userId: "user-1", email: "member@example.com", role: "member" },
+    ];
+    mocks.client.invitations = [
+      {
+        invitationId: "invite",
+        email: "pending@example.com",
+        expiresAt: "2027-01-01",
+      },
+    ];
+
+    renderTeam();
+
+    const table = await screen.findByRole("table", { name: "Members" });
+    expect(within(table).getByText("Team Owner")).toBeTruthy();
+    expect(within(table).getByText("owner@example.com")).toBeTruthy();
+    expect(within(table).getByText("member@example.com")).toBeTruthy();
+    expect(within(table).queryByRole("combobox")).toBeNull();
+    expect(within(table).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add members" })).toBeNull();
+    expect(screen.queryByText("pending@example.com")).toBeNull();
+    expect(mocks.client.listWorkspaceInvitations).not.toHaveBeenCalled();
+  });
+
+  it("retries loading the roster after a failure", async () => {
+    mocks.workspaces.data = [
+      {
+        workspaceId: "ws",
+        name: "Team",
+        ownerUserId: "user-2",
+        role: "member",
+      },
+    ];
+    mocks.client.members = [
+      { userId: "user-1", email: "member@example.com", role: "member" },
+    ];
+    mocks.client.listWorkspaceMembers.mockRejectedValueOnce(
+      new Error("network unavailable"),
+    );
+
+    renderTeam();
+
+    expect(
+      await screen.findByText("Could not load workspace members."),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    const table = await screen.findByRole("table", { name: "Members" });
+    expect(within(table).getByText("member@example.com")).toBeTruthy();
+    expect(mocks.client.listWorkspaceMembers).toHaveBeenCalledTimes(2);
   });
 
   it("requires confirmation before requesting ownership from the role select", async () => {
