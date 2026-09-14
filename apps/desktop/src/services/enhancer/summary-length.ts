@@ -25,10 +25,10 @@ export const SUMMARY_LENGTH_CONFIG: Record<
   SummaryLengthMode,
   SummaryLengthModeConfig
 > = {
-  crisp: { 
+  crisp: {
     ratio: 0.75,
     guidanceCharacterLimit: 4_500,
-    maxOutputTokens: 3_072
+    maxOutputTokens: 3_072,
   },
   balanced: {
     ratio: 0.875,
