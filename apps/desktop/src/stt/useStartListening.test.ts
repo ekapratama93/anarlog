@@ -675,8 +675,9 @@ describe("useStartListening", () => {
       await result.current();
     });
     vi.setSystemTime(capturedAt + 120_000);
-    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
-      .mock.calls[0]?.[0];
+    const lifecycle = vi.mocked(
+      transcriptionEvents.captureLifecycleEvent.listen,
+    ).mock.calls[0]?.[0];
     lifecycle?.({
       payload: {
         type: "started",
@@ -715,8 +716,9 @@ describe("useStartListening", () => {
     await act(async () => {
       await result.current();
     });
-    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
-      .mock.calls[0]?.[0];
+    const lifecycle = vi.mocked(
+      transcriptionEvents.captureLifecycleEvent.listen,
+    ).mock.calls[0]?.[0];
     lifecycle?.({
       payload: {
         type: "started",
@@ -788,9 +790,9 @@ describe("useStartListening", () => {
     });
 
     test("transcribes the full file instead of leftover chunks after a restart", async () => {
-      vi.mocked(
-        transcriptionCommands.listCaptureAudioChunks,
-      ).mockResolvedValue({ status: "ok", data: [leftoverChunk] });
+      vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue(
+        { status: "ok", data: [leftoverChunk] },
+      );
 
       await recoverStoppedCapture();
 
@@ -800,9 +802,9 @@ describe("useStartListening", () => {
     });
 
     test("does not transcribe chunks after reattaching to a running capture", async () => {
-      vi.mocked(
-        transcriptionCommands.listCaptureAudioChunks,
-      ).mockResolvedValue({ status: "ok", data: [leftoverChunk] });
+      vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue(
+        { status: "ok", data: [leftoverChunk] },
+      );
       loadCaptureLifecycleMarkerMock.mockResolvedValue({
         ...batchOnlyMarker,
         phase: "capturing",
@@ -838,12 +840,12 @@ describe("useStartListening", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const capturedAt = new Date("2026-07-24T00:00:00.000Z").getTime();
       vi.setSystemTime(capturedAt);
-      vi.mocked(
-        transcriptionCommands.listCaptureAudioChunks,
-      ).mockResolvedValue({
-        status: "ok",
-        data: [{ ...leftoverChunk, capture_started_at: capturedAt }],
-      });
+      vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue(
+        {
+          status: "ok",
+          data: [{ ...leftoverChunk, capture_started_at: capturedAt }],
+        },
+      );
       const { result } = renderHook(() => useStartListening("session-1"));
       await act(async () => {
         await result.current();
@@ -901,8 +903,9 @@ describe("useStartListening", () => {
     await act(async () => {
       await result.current();
     });
-    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
-      .mock.calls[0]?.[0];
+    const lifecycle = vi.mocked(
+      transcriptionEvents.captureLifecycleEvent.listen,
+    ).mock.calls[0]?.[0];
     lifecycle?.({
       payload: {
         type: "started",
