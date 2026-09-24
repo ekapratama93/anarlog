@@ -66,7 +66,6 @@ const {
   audioSourceMetadataMock,
   toastWarningMock,
   toastErrorMock,
-  toastInfoMock,
   toastDismissMock,
   startMeetingChatCaptureMock,
   stopMeetingChatCaptureMock,
@@ -123,7 +122,6 @@ const {
   audioSourceMetadataMock: vi.fn(),
   toastWarningMock: vi.fn(),
   toastErrorMock: vi.fn(),
-  toastInfoMock: vi.fn(),
   toastDismissMock: vi.fn(),
   startMeetingChatCaptureMock: vi.fn(),
   stopMeetingChatCaptureMock: vi.fn(),
@@ -203,7 +201,7 @@ vi.mock("@anlg/ui/components/ui/toast", () => ({
     warning: toastWarningMock,
     error: toastErrorMock,
     dismiss: toastDismissMock,
-    info: toastInfoMock,
+    info: vi.fn(),
   },
 }));
 
@@ -686,7 +684,6 @@ describe("useStartListening", () => {
         live_transcription_active: false,
       },
     } as never);
-    expect(toastInfoMock).not.toHaveBeenCalled();
     await act(async () => {
       await startMock.mock.calls[0]?.[1].onStopped("session-1", {
         chunkedAudio: true,
@@ -727,7 +724,6 @@ describe("useStartListening", () => {
         live_transcription_active: false,
       },
     } as never);
-    expect(toastInfoMock).not.toHaveBeenCalled();
     await act(async () => {
       await startMock.mock.calls[0]?.[1].onStopped("session-1", {
         chunkedAudio: true,
@@ -833,7 +829,6 @@ describe("useStartListening", () => {
       expect(runBatchMock.mock.calls.map(([path]) => path)).toEqual([
         "/tmp/session.mp3",
       ]);
-      expect(toastInfoMock).not.toHaveBeenCalled();
     });
 
     test("transcribes chunks when the full file is missing at stop", async () => {
@@ -897,28 +892,6 @@ describe("useStartListening", () => {
       expect(firstMarker?.postStopBatch === true).toBe(expected);
     },
   );
-
-  test("still announces recovery when requested live transcription starts disconnected", async () => {
-    const { result } = renderHook(() => useStartListening("session-1"));
-    await act(async () => {
-      await result.current();
-    });
-    const lifecycle = vi.mocked(
-      transcriptionEvents.captureLifecycleEvent.listen,
-    ).mock.calls[0]?.[0];
-    lifecycle?.({
-      payload: {
-        type: "started",
-        session_id: "session-1",
-        requested_live_transcription: true,
-        live_transcription_active: false,
-      },
-    } as never);
-    expect(toastInfoMock).toHaveBeenCalledWith(
-      "Waiting to recover the missing transcript",
-      expect.anything(),
-    );
-  });
 
   test("never claims that zero-retention audio was deleted when native cleanup failed", async () => {
     useConfigValueMock.mockImplementation((key: string) =>

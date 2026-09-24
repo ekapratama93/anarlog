@@ -25,6 +25,11 @@ msgstr ""
 msgid "(Unavailable — using current default)"
 msgstr ""
 
+#. placeholder {0}: reconnectRequired ? "Reconnect" : "Connect"
+#: src/settings/crm/index.tsx
+msgid "{0}"
+msgstr ""
+
 #. placeholder {0}: group.sessionIds.length
 #: src/sidebar/toast/undo-delete-toast.tsx
 msgid "{0} {noteLabel} deleted"
@@ -909,6 +914,7 @@ msgstr ""
 #: src/resource-sharing/library.tsx
 #: src/session-sharing/comments.tsx
 #: src/settings/ai/llm/subscriptions/connect.tsx
+#: src/settings/crm/index.tsx
 #: src/settings/dictionary/index.tsx
 #: src/settings/general/e2ee-setup.tsx
 #: src/settings/general/storage/legacy-cleanup.tsx
@@ -1025,6 +1031,7 @@ msgid "Checking connection"
 msgstr ""
 
 #: src/settings/automations/starter-config.tsx
+#: src/settings/crm/index.tsx
 msgid "Checking connection…"
 msgstr ""
 
@@ -1370,6 +1377,10 @@ msgstr ""
 msgid "comments"
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "company"
+msgstr ""
+
 #: src/contacts/details.tsx
 #: src/settings/general/account-profile.tsx
 msgid "Company"
@@ -1438,6 +1449,10 @@ msgstr ""
 msgid "Connect {0} Calendar"
 msgstr ""
 
+#: src/settings/crm/index.tsx
+msgid "Connect a CRM to look up your contacts from Anarlog. Connections are managed through your Anarlog account."
+msgstr ""
+
 #: src/onboarding/calendar.tsx
 #: src/onboarding/index.tsx
 msgid "Connect calendar"
@@ -1464,6 +1479,10 @@ msgstr ""
 msgid "Connect Notion"
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "Connect one in Settings"
+msgstr ""
+
 #: src/onboarding/calendar.tsx
 msgid "Connect Outlook"
 msgstr ""
@@ -1482,11 +1501,16 @@ msgid "Connect your integration"
 msgstr ""
 
 #: src/imports/screen.tsx
+#: src/settings/crm/index.tsx
 msgid "Connected"
 msgstr ""
 
 #: src/settings/general/account.tsx
 msgid "Connected accounts"
+msgstr ""
+
+#: src/settings/crm/index.tsx
+msgid "Connected and working"
 msgstr ""
 
 #. placeholder {0}: subscriptionProvider.displayName
@@ -1680,6 +1704,10 @@ msgstr ""
 
 #: src/session-sharing/management-panel.tsx
 msgid "Could not publish the desktop edits. Check the latest web copy and try again."
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "Could not reach the CRM"
 msgstr ""
 
 #: src/auth/connect-local-library-dialog.tsx
@@ -1878,6 +1906,12 @@ msgstr ""
 
 #: src/settings/general/summary-length.tsx
 msgid "Crisp"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+#: src/settings/crm/index.tsx
+#: src/sidebar/settings.tsx
+msgid "CRM"
 msgstr ""
 
 #: src/settings/general/billing.tsx
@@ -2093,6 +2127,7 @@ msgstr ""
 #: src/calendar/components/oauth/provider-content.tsx
 #: src/calendar/components/sidebar.tsx
 #: src/imports/screen.tsx
+#: src/settings/crm/index.tsx
 #: src/settings/sync/index.tsx
 #: src/settings/todo/provider-content.tsx
 msgid "Disconnect"
@@ -2189,6 +2224,10 @@ msgstr ""
 msgid "Eligible for free trial"
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "email"
+msgstr ""
+
 #: src/contacts/details.tsx
 #: src/session-sharing/delivery-panel.tsx
 #: src/settings/general/account-profile.tsx
@@ -2251,6 +2290,14 @@ msgstr ""
 
 #: src/session/components/outer-header/metadata/participants/chip.tsx
 msgid "Enhance contact {label}"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "Enrich contact from CRM"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "Enrich from CRM"
 msgstr ""
 
 #: src/settings/ai/stt/select.tsx
@@ -2410,6 +2457,10 @@ msgstr ""
 #: src/settings/automations/markdown-export-options.tsx
 msgid "Filename"
 msgstr "ファイル名"
+
+#: src/crm/enrich-contact.tsx
+msgid "Filled {filled} from {provider}."
+msgstr ""
 
 #: src/shared/open-note-dialog.tsx
 msgid "Find a note..."
@@ -2879,6 +2930,10 @@ msgstr ""
 msgid "Invited to join"
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "job title"
+msgstr ""
+
 #: src/contacts/details.tsx
 #: src/settings/general/account-profile.tsx
 msgid "Job Title"
@@ -3056,6 +3111,7 @@ msgid "Linear team"
 msgstr ""
 
 #: src/contacts/details.tsx
+#: src/crm/enrich-contact.tsx
 #: src/settings/general/account-profile.tsx
 msgid "LinkedIn"
 msgstr ""
@@ -3213,6 +3269,10 @@ msgstr ""
 
 #: src/settings/appearance/theme.tsx
 msgid "Match your device"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "Matched in {provider}; nothing new to add."
 msgstr ""
 
 #: src/folders/folder-editor.tsx
@@ -3422,6 +3482,10 @@ msgstr ""
 msgid "My automations"
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "name"
+msgstr ""
+
 #: src/contacts/details.tsx
 #: src/contacts/organization-details.tsx
 #: src/settings/general/account-profile.tsx
@@ -3522,6 +3586,14 @@ msgstr ""
 msgid "No content."
 msgstr ""
 
+#: src/crm/enrich-contact.tsx
+msgid "No CRM connected."
+msgstr ""
+
+#: src/settings/crm/index.tsx
+msgid "No CRM integrations are available yet."
+msgstr ""
+
 #: src/task/resource-view.tsx
 msgid "No description provided."
 msgstr ""
@@ -3580,6 +3652,10 @@ msgstr ""
 
 #: src/settings/dictionary/index.tsx
 msgid "No match"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "No matching contact found in {providers}."
 msgstr ""
 
 #: src/settings/general/main-language.tsx
@@ -3675,6 +3751,10 @@ msgstr ""
 
 #: src/settings/stats/insights.tsx
 msgid "Not available"
+msgstr ""
+
+#: src/settings/crm/index.tsx
+msgid "Not connected"
 msgstr ""
 
 #: src/settings/developers/cli.tsx
@@ -3847,6 +3927,10 @@ msgstr ""
 
 #: src/task/resource-view.tsx
 msgid "Open on GitHub"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "Open record"
 msgstr ""
 
 #: src/settings/todo/github.tsx
@@ -4023,6 +4107,10 @@ msgstr ""
 
 #: src/onboarding/index.tsx
 msgid "Permissions granted"
+msgstr ""
+
+#: src/crm/enrich-contact.tsx
+msgid "phone"
 msgstr ""
 
 #: src/contacts/details.tsx
@@ -4223,6 +4311,7 @@ msgid "Reconnect Notion"
 msgstr ""
 
 #: src/calendar/components/oauth/status.tsx
+#: src/settings/crm/index.tsx
 #: src/settings/todo/provider-content.tsx
 msgid "Reconnect required"
 msgstr ""
@@ -5088,6 +5177,10 @@ msgstr ""
 msgid "Sign in to connect {0}"
 msgstr ""
 
+#: src/settings/crm/index.tsx
+msgid "Sign in to connect a CRM."
+msgstr ""
+
 #: src/calendar/components/oauth/provider-content.tsx
 msgid "Sign in to connect your calendar"
 msgstr ""
@@ -5594,6 +5687,7 @@ msgid "Templates"
 msgstr ""
 
 #: src/settings/automations/index.tsx
+#: src/settings/crm/index.tsx
 #: src/settings/developers/webhooks.tsx
 msgid "Test"
 msgstr ""

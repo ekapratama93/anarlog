@@ -231,7 +231,6 @@ export function useCaptureLifecycle(sessionId: string) {
       // Persisted on the marker so restarts still run the full-file pass the
       // stop path deferred to, instead of chunks it may already have deleted.
       let postStopBatch = recoveredMarker?.postStopBatch === true;
-      let batchOnlyCapture = false;
       const retainAudio =
         recoveredMarker?.retainAudio ?? audioRetention !== "none";
       const automatic = recoveredMarker
@@ -445,7 +444,6 @@ export function useCaptureLifecycle(sessionId: string) {
             ),
         },
       );
-      const recoveryToastId = `capture-recovery-${sessionId}`;
       const audioRecovery = createCaptureAudioRecovery({
         startedAt,
         list: async () => {
@@ -536,26 +534,6 @@ export function useCaptureLifecycle(sessionId: string) {
             listenerStore.getState().clearBatchSession(`${sessionId}:recovery`);
           }
         },
-        onStatus: (status) => {
-          // Batch-only chunking is the normal transcription path, not a gap;
-          // failures still surface through the incomplete-transcript warning.
-          if (status === "complete" || batchOnlyCapture) {
-            toast.dismiss(recoveryToastId);
-            return;
-          }
-          toast.info(
-            status === "repairing"
-              ? "Filling in the missing transcript"
-              : "Waiting to recover the missing transcript",
-            {
-              id: recoveryToastId,
-              duration: Infinity,
-              description: !retainAudio
-                ? "Recovery runs while recording. Audio will be deleted when this meeting ends, even if recovery is unfinished."
-                : "Live transcription resumes separately. Saved audio is used to fill the gap.",
-            },
-          );
-        },
       });
       let recoveryUnlisten: (() => void)[] = [];
       let recoveryListening: Promise<void> | undefined;
@@ -591,10 +569,8 @@ export function useCaptureLifecycle(sessionId: string) {
                 // Retained audio lets batch-only providers transcribe the whole
                 // file after stop; chunking mid-meeting is only needed when the
                 // file is deleted at stop.
-                if (!retainAudio) {
-                  batchOnlyCapture = true;
-                  audioRecovery.batchOnly();
-                } else postStopBatch = true;
+                if (!retainAudio) audioRecovery.batchOnly();
+                else postStopBatch = true;
               } else audioRecovery.interrupted();
             } else if (payload.type === "finalizing" && !retainAudio) {
               void audioRecovery.stop(false);
@@ -629,9 +605,7 @@ export function useCaptureLifecycle(sessionId: string) {
         clearTimeout(credentialTimer);
         recoveryUnlisten.forEach((unlisten) => unlisten());
         recoveryUnlisten = [];
-        const result = await audioRecovery.stop(retainAudio);
-        toast.dismiss(recoveryToastId);
-        return result;
+        return audioRecovery.stop(retainAudio);
       };
       const marker = async (): Promise<CaptureLifecycleMarker> => ({
         version: 1,
