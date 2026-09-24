@@ -1,7 +1,10 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { events as transcriptionEvents } from "@anlg/plugin-transcription";
+import {
+  commands as transcriptionCommands,
+  events as transcriptionEvents,
+} from "@anlg/plugin-transcription";
 
 import { saveIncompleteCapture } from "./capture-result";
 import {
@@ -63,6 +66,7 @@ const {
   audioSourceMetadataMock,
   toastWarningMock,
   toastErrorMock,
+  toastInfoMock,
   toastDismissMock,
   startMeetingChatCaptureMock,
   stopMeetingChatCaptureMock,
@@ -119,6 +123,7 @@ const {
   audioSourceMetadataMock: vi.fn(),
   toastWarningMock: vi.fn(),
   toastErrorMock: vi.fn(),
+  toastInfoMock: vi.fn(),
   toastDismissMock: vi.fn(),
   startMeetingChatCaptureMock: vi.fn(),
   stopMeetingChatCaptureMock: vi.fn(),
@@ -198,7 +203,7 @@ vi.mock("@anlg/ui/components/ui/toast", () => ({
     warning: toastWarningMock,
     error: toastErrorMock,
     dismiss: toastDismissMock,
-    info: vi.fn(),
+    info: toastInfoMock,
   },
 }));
 
@@ -550,6 +555,10 @@ describe("useStartListening", () => {
     startMock.mockResolvedValue(true);
     attachLiveSessionMock.mockResolvedValue("attached");
     runBatchMock.mockResolvedValue(undefined);
+    vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
     isSupportedLanguagesLiveMock.mockResolvedValue({
       status: "ok",
       data: true,
@@ -641,6 +650,109 @@ describe("useStartListening", () => {
       });
     });
     expect(runBatchMock).not.toHaveBeenCalled();
+  });
+
+  test("transcribes a retained batch-only recording once after stop instead of per chunk", async () => {
+    vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          id: "chunk-1",
+          path: "/tmp/chunk-1.ogg",
+          capture_started_at: Date.now() - 120_000,
+          start_ms: 0,
+          audio_start_ms: 0,
+          end_ms: 60_000,
+        },
+      ],
+    });
+    const { result } = renderHook(() => useStartListening("session-1"));
+    await act(async () => {
+      await result.current();
+    });
+    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
+      .mock.calls[0]?.[0];
+    lifecycle?.({
+      payload: {
+        type: "started",
+        session_id: "session-1",
+        requested_live_transcription: false,
+        live_transcription_active: false,
+      },
+    } as never);
+    expect(toastInfoMock).not.toHaveBeenCalled();
+    await act(async () => {
+      await startMock.mock.calls[0]?.[1].onStopped("session-1", {
+        chunkedAudio: true,
+        durationSeconds: 120,
+        audioPath: "/tmp/session.mp3",
+        requestedLiveTranscription: false,
+        liveTranscriptionActive: false,
+        needsBatchRepair: false,
+      });
+    });
+    expect(runBatchMock).toHaveBeenCalledOnce();
+    expect(runBatchMock).toHaveBeenCalledWith(
+      "/tmp/session.mp3",
+      expect.objectContaining({ notifyOnCompletion: true }),
+    );
+    expect(setBatchTranscriptionPendingMock).toHaveBeenCalledWith(
+      "session-1",
+      true,
+    );
+  });
+
+  test("keeps zero-retention batch-only recordings on the in-meeting chunk path", async () => {
+    useConfigValueMock.mockImplementation((key: string) =>
+      key === "audio_retention" ? "none" : undefined,
+    );
+    const { result } = renderHook(() => useStartListening("session-1"));
+    await act(async () => {
+      await result.current();
+    });
+    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
+      .mock.calls[0]?.[0];
+    lifecycle?.({
+      payload: {
+        type: "started",
+        session_id: "session-1",
+        requested_live_transcription: false,
+        live_transcription_active: false,
+      },
+    } as never);
+    expect(toastInfoMock).not.toHaveBeenCalled();
+    await act(async () => {
+      await startMock.mock.calls[0]?.[1].onStopped("session-1", {
+        chunkedAudio: true,
+        durationSeconds: 60,
+        audioPath: "/tmp/session.mp3",
+        requestedLiveTranscription: false,
+        liveTranscriptionActive: false,
+        needsBatchRepair: false,
+      });
+    });
+    expect(runBatchMock).not.toHaveBeenCalled();
+  });
+
+  test("still announces recovery when requested live transcription starts disconnected", async () => {
+    const { result } = renderHook(() => useStartListening("session-1"));
+    await act(async () => {
+      await result.current();
+    });
+    const lifecycle = vi.mocked(transcriptionEvents.captureLifecycleEvent.listen)
+      .mock.calls[0]?.[0];
+    lifecycle?.({
+      payload: {
+        type: "started",
+        session_id: "session-1",
+        requested_live_transcription: true,
+        live_transcription_active: false,
+      },
+    } as never);
+    expect(toastInfoMock).toHaveBeenCalledWith(
+      "Waiting to recover the missing transcript",
+      expect.anything(),
+    );
   });
 
   test("never claims that zero-retention audio was deleted when native cleanup failed", async () => {
