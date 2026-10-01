@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SessionCard } from "@/components/session-card";
@@ -94,117 +95,123 @@ export function SearchPalette({
       statusBarTranslucent
       navigationBarTranslucent
     >
-      <Pressable accessible={false} onPress={onClose} style={styles.backdrop} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        pointerEvents="box-none"
-        style={styles.keyboard}
-      >
-        <View
+      <GestureHandlerRootView style={styles.root}>
+        <Pressable
+          accessible={false}
+          onPress={onClose}
+          style={styles.backdrop}
+        />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
           pointerEvents="box-none"
-          style={[
-            styles.overlay,
-            {
-              paddingTop: insets.top + Spacing.md,
-              paddingBottom: insets.bottom + Spacing.md,
-            },
-          ]}
+          style={styles.keyboard}
         >
           <View
-            accessibilityViewIsModal
-            onAccessibilityEscape={onClose}
-            style={[styles.palette, !hasGlass && styles.fallback]}
+            pointerEvents="box-none"
+            style={[
+              styles.overlay,
+              {
+                paddingTop: insets.top + Spacing.md,
+                paddingBottom: insets.bottom + Spacing.md,
+              },
+            ]}
           >
-            {hasGlass && (
-              <GlassView
-                colorScheme={colorScheme}
-                glassEffectStyle="regular"
-                pointerEvents="none"
-                style={StyleSheet.absoluteFill}
-              />
-            )}
-            <View style={styles.searchBar}>
-              <NativeIcon name="search" size={16} color={Colors.muted} />
-              <TextInput
-                ref={inputRef}
-                accessibilityLabel="Search meetings"
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={handleSearchChange}
-                placeholder="Search meetings"
-                placeholderTextColor={Colors.muted}
-                returnKeyType="search"
-                style={styles.input}
-                value={query}
-              />
-              {query !== "" && (
-                <IconButton
-                  accessibilityLabel="Clear search"
-                  icon="close"
-                  iconSize={16}
-                  onPress={() => {
-                    handleSearchChange("");
-                    inputRef.current?.focus();
-                  }}
-                  tone="muted"
+            <View
+              accessibilityViewIsModal
+              onAccessibilityEscape={onClose}
+              style={[styles.palette, !hasGlass && styles.fallback]}
+            >
+              {hasGlass && (
+                <GlassView
+                  colorScheme={colorScheme}
+                  glassEffectStyle="regular"
+                  pointerEvents="none"
+                  style={StyleSheet.absoluteFill}
                 />
               )}
-            </View>
-            {settledQuery !== "" &&
-              settledQuery === query.trim() &&
-              !search.error &&
-              !search.isLoading && (
-                <SearchAnalytics
-                  key={settledQuery}
-                  resultCount={search.results.length}
+              <View style={styles.searchBar}>
+                <NativeIcon name="search" size={16} color={Colors.muted} />
+                <TextInput
+                  ref={inputRef}
+                  accessibilityLabel="Search meetings"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={handleSearchChange}
+                  placeholder="Search meetings"
+                  placeholderTextColor={Colors.muted}
+                  returnKeyType="search"
+                  style={styles.input}
+                  value={query}
                 />
-              )}
-            <FlatList
-              data={search.results}
-              keyExtractor={(session) => session.id}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              style={styles.results}
-              contentContainerStyle={styles.resultContent}
-              ListFooterComponent={
-                search.hasMore ? (
-                  <Text style={styles.empty}>
-                    Showing the first 50 matches. Narrow your search to find
-                    more.
+                {query !== "" && (
+                  <IconButton
+                    accessibilityLabel="Clear search"
+                    icon="close"
+                    iconSize={16}
+                    onPress={() => {
+                      handleSearchChange("");
+                      inputRef.current?.focus();
+                    }}
+                    tone="muted"
+                  />
+                )}
+              </View>
+              {settledQuery !== "" &&
+                settledQuery === query.trim() &&
+                !search.error &&
+                !search.isLoading && (
+                  <SearchAnalytics
+                    key={settledQuery}
+                    resultCount={search.results.length}
+                  />
+                )}
+              <FlatList
+                data={search.results}
+                keyExtractor={(session) => session.id}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                style={styles.results}
+                contentContainerStyle={styles.resultContent}
+                ListFooterComponent={
+                  search.hasMore ? (
+                    <Text style={styles.empty}>
+                      Showing the first 50 matches. Narrow your search to find
+                      more.
+                    </Text>
+                  ) : null
+                }
+                ListEmptyComponent={
+                  <Text style={styles.empty} accessibilityLiveRegion="polite">
+                    {!hasQuery
+                      ? "Search by title or note content"
+                      : !isSettled || search.isLoading
+                        ? "Searching…"
+                        : search.error
+                          ? "Couldn't search meetings. Try again."
+                          : "No matches"}
                   </Text>
-                ) : null
-              }
-              ListEmptyComponent={
-                <Text style={styles.empty} accessibilityLiveRegion="polite">
-                  {!hasQuery
-                    ? "Search by title or note content"
-                    : !isSettled || search.isLoading
-                      ? "Searching…"
-                      : search.error
-                        ? "Couldn't search meetings. Try again."
-                        : "No matches"}
-                </Text>
-              }
-              renderItem={({ item }) => (
-                <SessionCard
-                  session={item}
-                  showFolder={sidebarPreferences.showFolder}
-                  showTags={sidebarPreferences.showTags}
-                  variant="plain"
-                  onPress={() => {
-                    captureAnalytics("search_result_opened", {
-                      entry_point: "mobile_home",
-                      result_type: "session",
-                    });
-                    onOpenSession(item);
-                  }}
-                  onDelete={() => onDeleteSession(item)}
-                />
-              )}
-            />
+                }
+                renderItem={({ item }) => (
+                  <SessionCard
+                    session={item}
+                    showFolder={sidebarPreferences.showFolder}
+                    showTags={sidebarPreferences.showTags}
+                    variant="plain"
+                    onPress={() => {
+                      captureAnalytics("search_result_opened", {
+                        entry_point: "mobile_home",
+                        result_type: "session",
+                      });
+                      onOpenSession(item);
+                    }}
+                    onDelete={() => onDeleteSession(item)}
+                  />
+                )}
+              />
+            </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -217,6 +224,9 @@ const useStyles = createStyleHook((Colors) => ({
   overlay: {
     flex: 1,
     paddingHorizontal: Spacing.md,
+  },
+  root: {
+    flex: 1,
   },
   keyboard: {
     flex: 1,

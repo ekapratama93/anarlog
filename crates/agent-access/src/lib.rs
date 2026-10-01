@@ -18,6 +18,7 @@ pub const DEFAULT_LIST_LIMIT: u32 = 20;
 pub const MAX_LIST_LIMIT: u32 = 200;
 pub const DEFAULT_TRANSCRIPT_LIMIT: u32 = 200;
 pub const MAX_TRANSCRIPT_LIMIT: u32 = 500;
+pub const DEFAULT_FOLDER_LIST_LIMIT: u32 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -46,7 +47,26 @@ pub struct ListMeetingsInput {
     pub query: Option<String>,
     #[schemars(description = "Exact recurring series id")]
     pub series_id: Option<String>,
+    #[schemars(
+        description = "Folder path from list_folders, such as Projects/Launch; includes meetings in its subfolders"
+    )]
+    #[serde(default)]
+    pub folder_path: Option<String>,
     #[schemars(description = "Maximum results; defaults to 20 and is capped at 200")]
+    #[schemars(range(min = 1, max = 200))]
+    pub limit: Option<u32>,
+    #[schemars(description = "Number of results to skip; defaults to 0")]
+    pub offset: Option<u32>,
+}
+
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Type, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub struct ListFoldersInput {
+    #[schemars(description = "Case-insensitive folder path substring")]
+    pub query: Option<String>,
+    #[schemars(description = "Maximum results; defaults to 100 and is capped at 200")]
     #[schemars(range(min = 1, max = 200))]
     pub limit: Option<u32>,
     #[schemars(description = "Number of results to skip; defaults to 0")]
@@ -116,6 +136,9 @@ pub struct MeetingListItem {
     pub started_at: String,
     pub ended_at: String,
     pub series_id: String,
+    /// Folder path such as `Projects/Launch`; null when the meeting is not in a folder.
+    #[serde(default)]
+    pub folder_path: Option<String>,
 }
 
 #[derive(
@@ -124,6 +147,28 @@ pub struct MeetingListItem {
 #[serde(rename_all = "snake_case")]
 pub struct MeetingPage {
     pub meetings: Vec<MeetingListItem>,
+    pub pagination: Pagination,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Type, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub struct Folder {
+    /// Slash-separated folder path used for filtering, such as `Projects/Launch`.
+    pub path: String,
+    /// Last path segment.
+    pub name: String,
+    /// Parent folder path; null for top-level folders.
+    pub parent_path: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Type, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub struct FolderPage {
+    pub folders: Vec<Folder>,
     pub pagination: Pagination,
 }
 
@@ -194,6 +239,9 @@ pub struct Meeting {
     pub timezone: String,
     pub language: String,
     pub series_id: String,
+    /// Folder path such as `Projects/Launch`; null when the meeting is not in a folder.
+    #[serde(default)]
+    pub folder_path: Option<String>,
     pub note: Option<Document>,
     pub summaries: Vec<Document>,
     pub participants: Vec<Participant>,
@@ -230,11 +278,21 @@ pub async fn list_meetings(pool: &SqlitePool, input: ListMeetingsInput) -> Resul
         .unwrap_or(DEFAULT_LIST_LIMIT)
         .clamp(1, MAX_LIST_LIMIT);
     let offset = input.offset.unwrap_or(0);
+    let folder_path = input
+        .folder_path
+        .as_deref()
+        .map(|path| {
+            normalize_folder_path(path)
+                .ok_or_else(|| Error::Invalid(format!("invalid folder path '{path}'")))
+        })
+        .transpose()?
+        .filter(|path| !path.is_empty());
     let mut meetings = anlg_db_app::list_sessions(
         pool,
         anlg_db_app::ListSessions {
             query: input.query.as_deref(),
             series_id: input.series_id.as_deref(),
+            folder_path: folder_path.as_deref(),
             limit: limit + 1,
             offset,
         },
@@ -254,6 +312,52 @@ pub async fn list_meetings(pool: &SqlitePool, input: ListMeetingsInput) -> Resul
 
     Ok(MeetingPage {
         meetings,
+        pagination,
+    })
+}
+
+pub async fn list_folders(pool: &SqlitePool, input: ListFoldersInput) -> Result<FolderPage> {
+    let limit = input
+        .limit
+        .unwrap_or(DEFAULT_FOLDER_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    let offset = input.offset.unwrap_or(0);
+    let needle = input
+        .query
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_lowercase();
+    let stored = anlg_db_app::list_folder_paths(pool)
+        .await
+        .map_err(|source| Error::Database {
+            action: "list folders",
+            source,
+        })?;
+    let mut paths = std::collections::BTreeSet::new();
+    for path in stored.iter().filter_map(|path| normalize_folder_path(path)) {
+        let mut end = 0;
+        for segment in path.split('/') {
+            end += segment.len();
+            paths.insert(path[..end].to_string());
+            end += 1;
+        }
+    }
+    let matching = paths
+        .into_iter()
+        .filter(|path| path.to_lowercase().contains(&needle))
+        .collect::<Vec<_>>();
+    let folders = matching
+        .iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|path| Folder::from_path(path))
+        .collect::<Vec<_>>();
+    let has_more = (offset as usize).saturating_add(folders.len()) < matching.len();
+    let pagination = pagination(offset, limit, folders.len(), Some(matching.len()), has_more);
+
+    Ok(FolderPage {
+        folders,
         pagination,
     })
 }
@@ -291,6 +395,7 @@ pub async fn get_meeting(pool: &SqlitePool, input: GetMeetingInput) -> Result<Me
         timezone: session.timezone,
         language: session.language,
         series_id: session.series_id,
+        folder_path: stored_folder_path(session.folder_path),
         note: note.map(Document::from),
         summaries,
         participants: participants.into_iter().map(Participant::from).collect(),
@@ -354,6 +459,7 @@ pub async fn get_recurring_meeting_history(
         ListMeetingsInput {
             query: None,
             series_id: Some(series_id.to_string()),
+            folder_path: None,
             limit: Some(limit),
             offset: Some(offset),
         },
@@ -426,6 +532,9 @@ impl Meeting {
         if !self.series_id.is_empty() {
             lines.push(format!("- Series: `{}`", self.series_id));
         }
+        if let Some(folder_path) = &self.folder_path {
+            lines.push(format!("- Folder: `{folder_path}`"));
+        }
         let people = self
             .participants
             .iter()
@@ -465,6 +574,7 @@ impl From<anlg_db_app::SessionListItem> for MeetingListItem {
             started_at: value.started_at,
             ended_at: value.ended_at,
             series_id: value.series_id,
+            folder_path: stored_folder_path(value.folder_path),
         }
     }
 }
@@ -481,8 +591,45 @@ impl From<&Meeting> for MeetingListItem {
             started_at: value.started_at.clone(),
             ended_at: value.ended_at.clone(),
             series_id: value.series_id.clone(),
+            folder_path: value.folder_path.clone(),
         }
     }
+}
+
+impl Folder {
+    fn from_path(path: &str) -> Self {
+        let (parent_path, name) = match path.rsplit_once('/') {
+            Some((parent, name)) => (Some(parent.to_string()), name),
+            None => (None, path),
+        };
+        Self {
+            path: path.to_string(),
+            name: name.to_string(),
+            parent_path,
+        }
+    }
+}
+
+fn stored_folder_path(path: String) -> Option<String> {
+    (!path.trim().is_empty()).then_some(path)
+}
+
+/// Mirrors the desktop folder-path rules: returns `Some("")` for blank input
+/// and `None` for absolute paths or empty, `.`, or `..` segments.
+fn normalize_folder_path(path: &str) -> Option<String> {
+    let path = path.replace('\\', "/");
+    let path = path.trim();
+    if path.starts_with('/') {
+        return None;
+    }
+    let path = path.trim_end_matches('/');
+    if path
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return path.is_empty().then(String::new);
+    }
+    Some(path.to_string())
 }
 
 impl From<anlg_db_app::SessionDocumentRow> for Document {
@@ -785,6 +932,10 @@ mod tests {
         .execute(db.pool())
         .await
         .unwrap();
+        sqlx::query("UPDATE sessions SET folder_path = 'Projects/Launch' WHERE id = 'meeting-1'")
+            .execute(db.pool())
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO session_documents
              (id, session_id, kind, body_format, body, title)
@@ -832,6 +983,10 @@ mod tests {
         .unwrap();
         assert_eq!(listed.meetings[0].id, "meeting-1");
         assert_eq!(listed.pagination.next_offset, Some(1));
+        assert_eq!(
+            listed.meetings[0].folder_path.as_deref(),
+            Some("Projects/Launch")
+        );
 
         let meeting = get_meeting(
             db.pool(),
@@ -842,6 +997,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(meeting.note.as_ref().unwrap().markdown, "Launch decision");
+        assert_eq!(meeting.folder_path.as_deref(), Some("Projects/Launch"));
+        assert!(
+            meeting
+                .to_markdown()
+                .contains("- Folder: `Projects/Launch`")
+        );
         assert_eq!(meeting.participants[0].display_name, "Alice");
         assert_eq!(meeting.action_items[0].text, "Prepare launch");
         let serialized = serde_json::to_value(&meeting).unwrap();
@@ -882,5 +1043,133 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["meeting-1", "meeting-2"]
         );
+        assert_eq!(history.meetings[1].folder_path, None);
+    }
+
+    #[tokio::test]
+    async fn folders_are_listed_and_filter_meetings() {
+        let db = test_db().await;
+        sqlx::query(
+            "INSERT INTO sessions (id, title, started_at, folder_path)
+             VALUES
+             ('launch', 'Launch', '2026-07-03', 'Projects/Launch'),
+             ('design', 'Design', '2026-07-02', 'Projects/Launch/Design'),
+             ('acme', 'ACME', '2026-07-01', 'Clients/ACME'),
+             ('unfiled', 'Unfiled', '2026-06-30', '')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO folders (id, path) VALUES ('empty', 'Projects/Empty')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let folders = list_folders(db.pool(), ListFoldersInput::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            folders
+                .folders
+                .iter()
+                .map(|folder| folder.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Clients",
+                "Clients/ACME",
+                "Projects",
+                "Projects/Empty",
+                "Projects/Launch",
+                "Projects/Launch/Design",
+            ]
+        );
+        assert_eq!(
+            folders.folders[5],
+            Folder {
+                path: "Projects/Launch/Design".to_string(),
+                name: "Design".to_string(),
+                parent_path: Some("Projects/Launch".to_string()),
+            }
+        );
+        assert_eq!(folders.folders[0].parent_path, None);
+        assert_eq!(folders.pagination.total, Some(6));
+
+        let searched = list_folders(
+            db.pool(),
+            ListFoldersInput {
+                query: Some("launch".to_string()),
+                limit: Some(1),
+                offset: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(searched.folders[0].path, "Projects/Launch");
+        assert_eq!(searched.pagination.total, Some(2));
+        assert_eq!(searched.pagination.next_offset, Some(1));
+
+        let in_folder = list_meetings(
+            db.pool(),
+            ListMeetingsInput {
+                folder_path: Some(" Projects/Launch/ ".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            in_folder
+                .meetings
+                .iter()
+                .map(|meeting| meeting.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["launch", "design"]
+        );
+
+        let all = list_meetings(
+            db.pool(),
+            ListMeetingsInput {
+                folder_path: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(all.meetings.len(), 4);
+        assert_eq!(all.meetings[3].folder_path, None);
+
+        let invalid = list_meetings(
+            db.pool(),
+            ListMeetingsInput {
+                folder_path: Some("../Projects".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(invalid, Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn meeting_records_without_folder_path_deserialize() {
+        let meeting: Meeting = serde_json::from_value(serde_json::json!({
+            "id": "meeting-1",
+            "title": "Planning",
+            "kind": "meeting",
+            "status": "active",
+            "created_at": "2026-07-13",
+            "updated_at": "2026-07-13",
+            "started_at": "",
+            "ended_at": "",
+            "timezone": "",
+            "language": "",
+            "series_id": "",
+            "note": null,
+            "summaries": [],
+            "participants": [],
+            "action_items": []
+        }))
+        .unwrap();
+        assert_eq!(meeting.folder_path, None);
+        assert_eq!(MeetingListItem::from(&meeting).folder_path, None);
     }
 }

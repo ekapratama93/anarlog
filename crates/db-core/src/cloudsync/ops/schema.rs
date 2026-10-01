@@ -1,31 +1,37 @@
-use sqlx::{Executor, Sqlite, SqliteConnection};
+use sqlx::{Executor, Sqlite};
+
+use anlg_cloudsync::{OwnedSqliteConnection, ReservedConnection};
 
 use super::super::{CloudsyncInterruptHandle, CloudsyncTableSpec};
 
-pub(crate) async fn interruptible_cleanup(
-    connection: &mut SqliteConnection,
+pub(crate) async fn interruptible_cleanup<C: OwnedSqliteConnection>(
+    connection: &mut ReservedConnection<C>,
     table_name: &str,
     interrupt: &CloudsyncInterruptHandle,
 ) -> Result<(), anlg_cloudsync::Error> {
     sqlx::query("SAVEPOINT cloudsync_cleanup")
-        .execute(&mut *connection)
+        .execute(connection.connection().await?)
         .await?;
-    let registration = match interrupt.register(connection).await {
+    let registration = match interrupt.register(connection.connection().await?).await {
         Ok(registration) => registration,
         Err(error) => {
             rollback_cleanup_savepoint(connection).await?;
             return Err(error.into());
         }
     };
-    let result = anlg_cloudsync::cleanup(&mut *connection, table_name).await;
-    if let Err(error) = registration.finish(connection).await {
+    let result = anlg_cloudsync::cleanup_on_connection(connection, table_name).await;
+    let finish_result: Result<(), anlg_cloudsync::Error> = match connection.connection().await {
+        Ok(connection) => registration.finish(connection).await.map_err(Into::into),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = finish_result {
         rollback_cleanup_savepoint(connection).await?;
-        return Err(error.into());
+        return Err(error);
     }
 
     match result {
         Ok(()) => match sqlx::query("RELEASE cloudsync_cleanup")
-            .execute(&mut *connection)
+            .execute(connection.connection().await?)
             .await
         {
             Ok(_) => Ok(()),
@@ -41,36 +47,37 @@ pub(crate) async fn interruptible_cleanup(
     }
 }
 
-async fn rollback_cleanup_savepoint(
-    connection: &mut SqliteConnection,
+async fn rollback_cleanup_savepoint<C: OwnedSqliteConnection>(
+    connection: &mut ReservedConnection<C>,
 ) -> Result<(), anlg_cloudsync::Error> {
     sqlx::raw_sql("ROLLBACK TO cloudsync_cleanup; RELEASE cloudsync_cleanup")
-        .execute(connection)
+        .execute(connection.connection().await?)
         .await?;
     Ok(())
 }
 
-pub(crate) async fn interruptible_init(
-    connection: &mut SqliteConnection,
+pub(crate) async fn interruptible_init<C: OwnedSqliteConnection>(
+    connection: &mut ReservedConnection<C>,
     table_name: &str,
     crdt_algo: Option<&str>,
     init_flags: Option<i64>,
     interrupt: &CloudsyncInterruptHandle,
 ) -> Result<(), anlg_cloudsync::Error> {
-    let registration = interrupt.register(connection).await?;
-    let result = anlg_cloudsync::init(&mut *connection, table_name, crdt_algo, init_flags).await;
-    registration.finish(connection).await?;
+    let registration = interrupt.register(connection.connection().await?).await?;
+    let result =
+        anlg_cloudsync::init_on_connection(connection, table_name, crdt_algo, init_flags).await;
+    registration.finish(connection.connection().await?).await?;
     result
 }
 
-pub(super) async fn init_enabled_tables(
-    connection: &mut SqliteConnection,
+pub(super) async fn init_enabled_tables<C: OwnedSqliteConnection>(
+    connection: &mut ReservedConnection<C>,
     tables: &[CloudsyncTableSpec],
     interrupt: &CloudsyncInterruptHandle,
 ) -> Result<(), anlg_cloudsync::Error> {
     for table in tables.iter().filter(|table| table.enabled) {
         interruptible_init(
-            &mut *connection,
+            connection,
             &table.table_name,
             table.crdt_algo.as_deref(),
             table.init_flags,

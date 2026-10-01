@@ -241,7 +241,9 @@ const resolveLLMConnection = (params: {
       conn: {
         providerId,
         modelId,
-        baseUrl: baseUrl ?? new URL("/llm", env.VITE_API_URL).toString(),
+        baseUrl:
+          baseUrl ??
+          new URL("/llm", env.VITE_AI_API_URL ?? env.VITE_API_URL).toString(),
         apiKey: session.access_token,
         reasoningEffort,
       },
@@ -344,7 +346,14 @@ const createProviderModel = (
         oauth
           ? wrapLanguageModel({
               model,
-              middleware: streamOnlyGenerationMiddleware,
+              middleware: [
+                // The SDK must serialize history as stateless before fetch
+                // enforces the Codex request contract.
+                defaultSettingsMiddleware({
+                  settings: { providerOptions: { openai: { store: false } } },
+                }),
+                streamOnlyGenerationMiddleware,
+              ],
             })
           : model,
       );

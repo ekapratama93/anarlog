@@ -26,6 +26,8 @@ async function waitFor(predicate) {
   assert.fail("condition was not reached");
 }
 
+const instantSettle = { intervalMs: 0, timeoutMs: 0 };
+
 function dependencies(overrides = {}) {
   return {
     readRecoveryKey: async () => "recovery-key",
@@ -40,6 +42,7 @@ function dependencies(overrides = {}) {
     getDevice: async () => ({ fingerprint: "device-1234" }),
     enrollDevice: async () => ({ status: "first_device" }),
     bootstrap: async () => "configured",
+    shareEnrollments: async () => {},
     stop: async () => {},
     syncNow: async () => {},
     getStatus: async () => status,
@@ -68,6 +71,8 @@ test("silently establishes encryption for the first device", async () => {
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
 
@@ -88,6 +93,8 @@ test("boots the native replica with the stored account key", async () => {
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
 
@@ -131,6 +138,8 @@ test("ignores a stale activation before booting the next account", async () => {
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
   await waitFor(() => resolveFirstRead !== undefined);
@@ -157,6 +166,8 @@ test("keeps working locally while another device approves enrollment", async () 
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
 
@@ -180,14 +191,18 @@ test("rolls back secure storage when the server rejects a new identity", async (
         saved = null;
       },
       claimIdentity: async () => {
-        throw new Error("identity mismatch");
+        throw Object.assign(new Error("identity mismatch"), {
+          code: "identity_mismatch",
+        });
       },
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
-  await waitFor(() => controller.getSnapshot().phase === "error");
+  await waitFor(() => controller.getSnapshot().phase === "approval_pending");
   assert.equal(deleted, true);
   assert.equal(saved, null);
 });
@@ -227,6 +242,8 @@ test("uses the refreshed session when managed enrollment finishes", async () => 
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
   await waitFor(() => firstEnrollmentResolve !== undefined);
@@ -260,15 +277,19 @@ test("keeps a recovered enrollment reusable until identity claim succeeds", asyn
         },
       }),
       claimIdentity: async () => {
-        throw new Error("identity mismatch");
+        throw Object.assign(new Error("identity mismatch"), {
+          code: "identity_mismatch",
+        });
       },
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
 
-  await waitFor(() => controller.getSnapshot().phase === "error");
+  await waitFor(() => controller.getSnapshot().phase === "identity_mismatch");
   assert.equal(saved, null);
   assert.equal(enrollmentCompleted, false);
 });
@@ -336,6 +357,8 @@ test("stops native sync when the account lifecycle ends", async () => {
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
   await waitFor(() => controller.getSnapshot().phase === "ready");
@@ -388,6 +411,8 @@ test("coalesces foreground and manual sync requests while one is active", async 
     }),
     0,
     0,
+    undefined,
+    instantSettle,
   );
   controller.activate(session);
   await waitFor(() => controller.getSnapshot().phase === "ready");
@@ -398,7 +423,134 @@ test("coalesces foreground and manual sync requests while one is active", async 
   assert.equal(syncCount, 1);
   assert.equal(controller.getSnapshot().syncingNow, true);
 
+  let manualSettled = false;
+  void manualSync.then(() => {
+    manualSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manualSettled, false);
+
   finishSync();
   await Promise.all([foregroundSync, manualSync]);
+  assert.equal(manualSettled, true);
   assert.equal(controller.getSnapshot().syncingNow, false);
+});
+
+test("sync-now waits for the queued replica round to record a result", async () => {
+  let statusCalls = 0;
+  const controller = new MobileSyncController(
+    dependencies({
+      getStatus: async () => {
+        statusCalls += 1;
+        return statusCalls >= 4 ? { ...status, last_sync_at_ms: 5678 } : status;
+      },
+    }),
+    0,
+    0,
+    undefined,
+    { intervalMs: 0, timeoutMs: 5_000 },
+  );
+  controller.activate(session);
+  await waitFor(() => controller.getSnapshot().phase === "ready");
+
+  await controller.syncNow();
+  assert.equal(controller.getSnapshot().lastSyncAtMs, 5678);
+  assert.equal(controller.getSnapshot().syncingNow, false);
+});
+
+test("re-activation does not hand the new session a stale in-flight sync", async () => {
+  let syncCount = 0;
+  let finishFirstSync;
+  const controller = new MobileSyncController(
+    dependencies({
+      syncNow: async () => {
+        syncCount += 1;
+        if (syncCount === 1) {
+          await new Promise((resolve) => {
+            finishFirstSync = resolve;
+          });
+        }
+      },
+    }),
+    0,
+    0,
+    undefined,
+    instantSettle,
+  );
+  controller.activate(session);
+  await waitFor(() => controller.getSnapshot().phase === "ready");
+
+  const staleSync = controller.syncNow();
+  await waitFor(() => finishFirstSync !== undefined);
+
+  controller.activate({ ...session, accountUserId: "user-2" });
+  await waitFor(() => controller.getSnapshot().phase === "ready");
+  assert.equal(controller.getSnapshot().syncingNow, false);
+
+  await controller.syncNow();
+  assert.equal(syncCount, 2);
+  assert.equal(controller.getSnapshot().syncingNow, false);
+
+  finishFirstSync();
+  await staleSync;
+  assert.equal(controller.getSnapshot().syncingNow, false);
+});
+
+test("shares keys once sync is ready and cancels sharing on sign-out", async () => {
+  let activeSignal;
+  let sharedSession;
+  const controller = new MobileSyncController(
+    dependencies({
+      shareEnrollments: async (session, signal) => {
+        sharedSession = session;
+        activeSignal = signal;
+        await new Promise((resolve) =>
+          signal.addEventListener("abort", resolve),
+        );
+      },
+    }),
+    0,
+    0,
+    undefined,
+    instantSettle,
+  );
+  const stop = controller.activate(session);
+  await waitFor(() => activeSignal !== undefined);
+  assert.deepEqual(sharedSession, session);
+  stop();
+  assert.equal(activeSignal.aborted, true);
+});
+
+test("retains the first-device key when the claim response is lost", async () => {
+  let saved = null;
+  let bootstrapKey;
+  const controller = new MobileSyncController(
+    dependencies({
+      readRecoveryKey: async () => saved,
+      saveRecoveryKey: async (_account, key) => {
+        saved = key;
+      },
+      deleteRecoveryKey: async () => {
+        saved = null;
+      },
+      claimIdentity: async () => {
+        throw new Error("response lost");
+      },
+      bootstrap: async (_session, key) => {
+        bootstrapKey = key;
+        return "configured";
+      },
+    }),
+    0,
+    0,
+    undefined,
+    instantSettle,
+  );
+  controller.activate(session);
+  await waitFor(() => controller.getSnapshot().phase === "error");
+  assert.equal(saved, "generated-recovery-key");
+  controller.retry();
+  await waitFor(() => controller.getSnapshot().phase === "ready");
+  assert.equal(bootstrapKey, "generated-recovery-key");
+  controller.suspend();
 });

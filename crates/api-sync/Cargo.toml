@@ -11,21 +11,24 @@ anlg-supabase-storage = { workspace = true }
 
 utoipa = { workspace = true }
 
-axum = { workspace = true }
+axum = { workspace = true, features = ["ws"] }
+base64 = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }
 hmac = { workspace = true }
 reqwest = { workspace = true, features = ["json", "query", "stream"] }
-sentry = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+yrs = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 wiremock = { workspace = true }

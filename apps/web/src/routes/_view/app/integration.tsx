@@ -8,6 +8,7 @@ import {
 } from "@/functions/desktop-flow";
 import { useBilling } from "@/hooks/use-billing";
 import { getIntegrationBillingGate } from "@/lib/integration-billing-gate";
+import { callbackPortSchema } from "@/lib/integration-desktop-return";
 import { useNangoSessionHandoffToken } from "@/lib/integration-handoff";
 
 import { IntegrationButton, IntegrationPageLayout } from "./-integration-ui";
@@ -16,6 +17,7 @@ import { DisconnectFlow } from "./-integrations-disconnect-flow";
 import { UpgradePrompt } from "./-integrations-upgrade-prompt";
 
 const commonSearch = {
+  callback_port: callbackPortSchema,
   integration_id: z.string().default("google-calendar"),
   connection_id: z.string().optional(),
   action: z.enum(["connect", "reconnect", "disconnect"]).default("connect"),
@@ -29,69 +31,93 @@ const INTEGRATION_DISPLAY: Record<
   string,
   { name: string; description: string; connectingHint: string }
 > = {
+  "google-drive": {
+    name: "Google Drive",
+    description:
+      "Connect Google Drive to save meeting summaries and transcripts to a folder you choose",
+    connectingHint: "Finish authorization with Google, then return to Anarlog",
+  },
   "google-calendar": {
     name: "Google Calendar",
-    description:
-      "Review how Anarlog uses Google Calendar data, then continue to Google",
+    description: "See upcoming events and link them to private notes",
     connectingHint: "Finish authorization with Google, then return to Anarlog",
   },
   outlook: {
     name: "Outlook Calendar",
-    description:
-      "Review how Anarlog uses Outlook Calendar data, then continue to Microsoft",
+    description: "See upcoming events and link them to private notes",
     connectingHint:
       "Finish authorization with Microsoft, then return to Anarlog",
   },
   linear: {
     name: "Linear",
-    description: "Connect Linear to sync your issues and tasks",
+    description: "Sync your issues and tasks",
     connectingHint: "Follow the prompts to connect your Linear account",
   },
   github: {
     name: "GitHub",
-    description: "Connect GitHub to sync your issues and pull requests",
+    description: "Sync your issues and pull requests",
     connectingHint: "Follow the prompts to connect your GitHub account",
   },
   slack: {
     name: "Slack",
-    description: "Connect Slack to send meeting recaps to your channels",
+    description: "Send meeting recaps to your channels",
     connectingHint: "Finish authorization with Slack, then return to Anarlog",
   },
   notion: {
     name: "Notion",
-    description: "Connect Notion to add meeting updates to your pages",
+    description: "Add meeting updates to your pages",
     connectingHint: "Pick the Notion pages to share, then return to Anarlog",
   },
   zoom: {
     name: "Zoom",
-    description:
-      "Review how Anarlog uses Zoom cloud recordings, then continue to Zoom",
+    description: "Sync your Zoom cloud recordings",
     connectingHint: "Finish authorization with Zoom, then return to Anarlog",
   },
   fathom: {
     name: "Fathom",
-    description:
-      "Review how Anarlog uses Fathom meeting recordings, then continue to Fathom",
+    description: "Sync your Fathom meeting recordings",
     connectingHint: "Finish authorization with Fathom, then return to Anarlog",
   },
   webex: {
     name: "Webex",
-    description:
-      "Review how Anarlog uses Webex meeting transcripts, then continue to Webex",
+    description: "Sync your Webex meeting transcripts",
     connectingHint: "Finish authorization with Webex, then return to Anarlog",
   },
   "google-meet": {
     name: "Google Meet",
-    description:
-      "Review how Anarlog uses Google Meet transcripts, then continue to Google",
+    description: "Sync your Google Meet transcripts",
     connectingHint: "Finish authorization with Google, then return to Anarlog",
   },
   "microsoft-teams": {
     name: "Microsoft Teams",
-    description:
-      "Review how Anarlog uses Teams meeting transcripts, then continue to Microsoft",
+    description: "Sync your Teams meeting transcripts",
     connectingHint:
       "Finish authorization with Microsoft, then return to Anarlog",
+  },
+  attio: {
+    name: "Attio",
+    description: "Connect Attio to look up your contacts",
+    connectingHint: "Follow the prompts to connect your Attio workspace",
+  },
+  close: {
+    name: "Close",
+    description: "Connect Close to look up your contacts",
+    connectingHint: "Follow the prompts to connect your Close account",
+  },
+  hubspot: {
+    name: "HubSpot",
+    description: "Connect HubSpot to look up your contacts",
+    connectingHint: "Follow the prompts to connect your HubSpot account",
+  },
+  pipedrive: {
+    name: "Pipedrive",
+    description: "Connect Pipedrive to look up your contacts",
+    connectingHint: "Follow the prompts to connect your Pipedrive account",
+  },
+  salesforce: {
+    name: "Salesforce",
+    description: "Connect Salesforce to look up your contacts",
+    connectingHint: "Follow the prompts to connect your Salesforce account",
   },
 };
 

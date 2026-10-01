@@ -18,6 +18,7 @@ const ctx: Ctx = {
   to: new Date("2026-06-02T00:00:00.000Z"),
   calendarIds: new Set(["cal-1"]),
   calendarTrackingIdToId: new Map([["primary", "cal-1"]]),
+  calendars: [{ id: "cal-1", tracking_id_calendar: "primary" }],
 };
 
 describe("fetchIncomingEvents", () => {

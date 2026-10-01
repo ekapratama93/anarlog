@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 
 use crate::config::{ReplicaConfig, SyncConfig};
+use crate::live_docs::LiveDocs;
 
 const UPSTREAM_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const ATTACHMENT_VERIFICATION_CONCURRENCY: usize = 1;
@@ -64,6 +65,7 @@ pub struct AppState {
     pub client: reqwest::Client,
     pub storage: anlg_supabase_storage::SupabaseStorage,
     pub attachment_verification_slots: Arc<Semaphore>,
+    pub(crate) live_docs: LiveDocs,
 }
 
 impl AppState {
@@ -84,6 +86,7 @@ impl AppState {
             attachment_verification_slots: Arc::new(Semaphore::new(
                 ATTACHMENT_VERIFICATION_CONCURRENCY,
             )),
+            live_docs: LiveDocs::default(),
         }
     }
 }

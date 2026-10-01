@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 
 import { commands as openerCommands } from "@anlg/plugin-opener2";
 import { getCurrentWebviewWindowLabel } from "@anlg/plugin-windows";
+import { useMountEffect } from "@anlg/ui/hooks/use-mount-effect";
 import { parseEventInstant } from "@anlg/utils";
 
 import { getIgnoredEventSets } from "~/calendar/ignored-events";
@@ -9,7 +10,6 @@ import { liveQueryClient } from "~/db";
 import { getOrCreateSessionForEventId } from "~/session/queries";
 import { useConfigValues } from "~/shared/config";
 import { useLatestRef } from "~/shared/hooks/useLatestRef";
-import { useMountEffect } from "~/shared/hooks/useMountEffect";
 import type { LiveSessionStatus } from "~/store/zustand/listener/general-shared";
 import { listenerStore } from "~/store/zustand/listener/instance";
 import { type Tab, useTabs } from "~/store/zustand/tabs";

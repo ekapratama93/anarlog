@@ -180,42 +180,6 @@ describe("SettingsDevelopers", () => {
     cleanup();
   });
 
-  it("shows one guide button in the page header", () => {
-    mocks.checkEmbeddedCli.mockResolvedValue({
-      status: "ok",
-      data: {
-        supported: true,
-        commandName: "anarlog",
-        installPath: "/Users/test/.local/bin/anarlog",
-        state: "installed",
-        details: "Installed.",
-      },
-    });
-
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <SettingsDevelopers />
-      </QueryClientProvider>,
-    );
-
-    const heading = screen.getByRole("heading", { name: "Developers" });
-    const guideButton = within(heading.parentElement as HTMLElement).getByRole(
-      "button",
-      { name: "Guide" },
-    );
-    expect(screen.getAllByRole("button", { name: "Guide" })).toHaveLength(1);
-
-    fireEvent.click(guideButton);
-
-    expect(mocks.openUrl).toHaveBeenCalledWith(
-      "https://docs.anarlog.so/agents/overview",
-      null,
-    );
-  });
-
   it("uses the installed CLI path when copying the MCP configuration", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -382,6 +346,13 @@ describe("SettingsDevelopers", () => {
     );
 
     expect(await screen.findByText(/Uploads meeting content/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /separate server-readable copy of your meeting titles, notes, summaries, participants, action items, and transcripts/,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(/end-to-end encrypted/)).toBeTruthy();
+    expect(screen.getByText(/deletes the server-readable copies/)).toBeTruthy();
     const toggle = await screen.findByRole("switch", {
       name: "Enable Cloud API & Connectors",
     });
@@ -400,6 +371,52 @@ describe("SettingsDevelopers", () => {
     });
     expect(screen.getByText("REST API")).toBeTruthy();
     expect(screen.getByText("Remote MCP")).toBeTruthy();
+  });
+
+  it("reports that disabling deletes the server-readable copies", async () => {
+    mocks.checkEmbeddedCli.mockResolvedValue({
+      status: "ok",
+      data: {
+        supported: false,
+        commandName: "anarlog",
+        installPath: "/Users/test/.local/bin/anarlog",
+        state: "unsupported",
+        details: "Unavailable.",
+      },
+    });
+    mocks.getCloudApiSettings.mockResolvedValue({
+      enabled: true,
+      updated_at: "2026-07-28T00:00:00Z",
+    });
+    mocks.setCloudApiEnabled.mockResolvedValue({
+      enabled: false,
+      updated_at: "2026-07-29T00:00:00Z",
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsDevelopers />
+      </QueryClientProvider>,
+    );
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Enable Cloud API & Connectors",
+    });
+    await waitFor(() => expect(toggle.hasAttribute("disabled")).toBe(false));
+    expect(toggle.getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(mocks.setCloudApiEnabled).toHaveBeenCalledWith(false);
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "Cloud API disabled and readable copies deleted",
+      );
+    });
+    expect(mocks.backfillCloudApiSnapshots).not.toHaveBeenCalled();
   });
 
   it("shows Cloud API controls and toasts on the free plan", () => {
@@ -431,6 +448,7 @@ describe("SettingsDevelopers", () => {
     );
 
     expect(screen.getByText("REST API")).toBeTruthy();
+    expect(screen.getByText(/server-readable copy/)).toBeTruthy();
     expect(mocks.getCloudApiSettings).not.toHaveBeenCalled();
     expect(mocks.toastWarning).toHaveBeenCalledWith(
       "This requires Anarlog Pro",

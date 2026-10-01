@@ -18,6 +18,7 @@ import { SignInScreen } from "@/auth/screens";
 import type { SignInMethod } from "@/auth/sign-in";
 import { useTrial } from "@/auth/use-trial";
 import { BrandLoadingView } from "@/components/brand-loading-view";
+import { ToastHost } from "@/components/toast-host";
 import { Button } from "@/components/ui/button";
 import { Spacing, Typography } from "@/constants/theme";
 import { initializeAnalytics, screenAnalytics } from "@/lib/analytics";
@@ -58,9 +59,9 @@ function AnalyticsLifecycle() {
   const pathname = usePathname();
   const previousPathRef = useRef<string | null>(null);
 
-  useEffect(() => {
+  useMountEffect(() => {
     void initializeAnalytics();
-  }, []);
+  });
 
   useEffect(() => {
     const normalizedPathname = pathname.replace(/^\/note\/[^/]+/, "/note/:id");
@@ -225,6 +226,7 @@ function RootLayout() {
           <AuthProvider>
             <AnalyticsLifecycle />
             <Gate />
+            <ToastHost />
             <AppLock />
             <AppStatusBar />
           </AuthProvider>

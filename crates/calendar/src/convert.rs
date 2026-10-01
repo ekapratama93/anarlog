@@ -639,68 +639,55 @@ mod meeting_link_tests {
     const CAL_LINK: &str = "https://app.cal.com/video/abc123";
 
     #[test]
-    fn provider_link_wins_over_parsed_fields() {
-        assert_eq!(
-            resolve_meeting_link(
-                Some("https://provider.example/join".to_string()),
+    fn resolve_meeting_link_precedence() {
+        for (provider, location, description, expected) in [
+            (
+                Some("https://provider.example/join"),
                 Some(MEET_LINK),
                 Some(CAL_LINK),
+                Some("https://provider.example/join"),
             ),
-            Some("https://provider.example/join".to_string())
-        );
+            (None, Some(MEET_LINK), Some(CAL_LINK), Some(MEET_LINK)),
+            (
+                None,
+                Some("Conference room 4"),
+                Some(CAL_LINK),
+                Some(CAL_LINK),
+            ),
+            (None, Some("Conference room 4"), Some("Agenda"), None),
+            (None, None, None, None),
+        ] {
+            assert_eq!(
+                resolve_meeting_link(provider.map(str::to_string), location, description)
+                    .as_deref(),
+                expected
+            );
+        }
     }
 
     #[test]
-    fn location_link_wins_over_description_link() {
-        assert_eq!(
-            resolve_meeting_link(None, Some(MEET_LINK), Some(CAL_LINK)),
-            Some(MEET_LINK.to_string())
-        );
-    }
-
-    #[test]
-    fn description_link_is_the_last_fallback() {
-        assert_eq!(
-            resolve_meeting_link(None, Some("Conference room 4"), Some(CAL_LINK)),
-            Some(CAL_LINK.to_string())
-        );
-    }
-
-    #[test]
-    fn no_link_stays_absent() {
-        assert_eq!(
-            resolve_meeting_link(None, Some("Conference room 4"), Some("Agenda")),
-            None
-        );
-        assert_eq!(resolve_meeting_link(None, None, None), None);
-    }
-
-    #[test]
-    fn google_events_cross_the_bridge_with_a_final_link() {
-        let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+    fn google_events_resolve_meeting_link() {
+        let event_with_description_link: GoogleEvent = serde_json::from_value(serde_json::json!({
             "id": "evt-1",
             "summary": "Weekly sync",
             "location": "Conference room 4",
             "description": format!("Join here: {MEET_LINK}"),
         }))
         .unwrap();
-
-        let converted = convert_google_events(vec![event], "cal-1");
-        assert_eq!(converted[0].meeting_link.as_deref(), Some(MEET_LINK));
-    }
-
-    #[test]
-    fn google_provider_link_beats_description_parsing() {
-        let event: GoogleEvent = serde_json::from_value(serde_json::json!({
+        let event_with_provider_link: GoogleEvent = serde_json::from_value(serde_json::json!({
             "id": "evt-1",
             "hangoutLink": "https://meet.google.com/xyz-abcd-efg",
             "description": format!("Old link: {MEET_LINK}"),
         }))
         .unwrap();
 
-        let converted = convert_google_events(vec![event], "cal-1");
+        let converted = convert_google_events(
+            vec![event_with_description_link, event_with_provider_link],
+            "cal-1",
+        );
+        assert_eq!(converted[0].meeting_link.as_deref(), Some(MEET_LINK));
         assert_eq!(
-            converted[0].meeting_link.as_deref(),
+            converted[1].meeting_link.as_deref(),
             Some("https://meet.google.com/xyz-abcd-efg")
         );
     }
@@ -734,120 +721,74 @@ mod meeting_link_tests {
     }
 
     #[test]
-    fn outlook_naive_utc_datetimes_become_rfc3339_utc() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
+    fn outlook_timed_events_normalize_to_utc() {
+        for (date_time, tz, expected_started_at) in [
+            (
                 "2026-08-27T12:00:00.0000000",
-                Some("UTC"),
-                false,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T12:00:00+00:00");
-        assert_eq!(converted[0].ended_at, "2026-08-27T12:00:00+00:00");
-    }
-
-    #[test]
-    fn outlook_cest_windows_timezone_converts_to_utc_instant() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
+                "UTC",
+                "2026-08-27T12:00:00+00:00",
+            ),
+            (
                 "2026-08-27T14:00:00.0000000",
-                Some("W. Europe Standard Time"),
-                false,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T12:00:00+00:00");
-    }
-
-    #[test]
-    fn outlook_iana_timezone_converts_to_utc_instant() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
+                "W. Europe Standard Time",
+                "2026-08-27T12:00:00+00:00",
+            ),
+            (
                 "2026-08-27T14:00:00",
-                Some("Europe/Paris"),
-                false,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T12:00:00+00:00");
-    }
-
-    #[test]
-    fn outlook_rfc3339_offset_is_normalized_to_utc() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
+                "Europe/Paris",
+                "2026-08-27T12:00:00+00:00",
+            ),
+            (
                 "2026-08-27T14:00:00+02:00",
-                Some("UTC"),
-                false,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T12:00:00+00:00");
-    }
-
-    #[test]
-    fn outlook_all_day_keeps_the_calendar_date() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
-                "2026-08-27T00:00:00.0000000",
-                Some("UTC"),
-                true,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T00:00:00");
-        assert!(converted[0].is_all_day);
-    }
-
-    #[test]
-    fn outlook_all_day_keeps_the_calendar_date_in_named_zones() {
-        let converted = convert_outlook_events(
-            vec![outlook_event_with_start(
-                "2026-08-27T00:00:00.0000000",
-                Some("Pacific Standard Time"),
-                true,
-            )],
-            "cal-2",
-        );
-
-        assert_eq!(converted[0].started_at, "2026-08-27T00:00:00");
-    }
-
-    #[test]
-    fn outlook_unmapped_common_windows_zones_convert() {
-        for (windows_tz, date_time, expected) in [
+                "UTC",
+                "2026-08-27T12:00:00+00:00",
+            ),
             (
-                "Turkey Standard Time",
                 "2026-08-27T15:00:00.0000000",
+                "Turkey Standard Time",
                 "2026-08-27T12:00:00+00:00",
             ),
             (
+                "2026-08-27T20:00:00.0000000",
                 "Taipei Standard Time",
-                "2026-08-27T20:00:00.0000000",
                 "2026-08-27T12:00:00+00:00",
             ),
             (
+                "2026-08-27T20:00:00.0000000",
                 "W. Australia Standard Time",
-                "2026-08-27T20:00:00.0000000",
                 "2026-08-27T12:00:00+00:00",
             ),
             (
-                "Central Standard Time (Mexico)",
                 "2026-08-27T06:00:00.0000000",
+                "Central Standard Time (Mexico)",
                 "2026-08-27T12:00:00+00:00",
             ),
         ] {
             let converted = convert_outlook_events(
-                vec![outlook_event_with_start(date_time, Some(windows_tz), false)],
+                vec![outlook_event_with_start(date_time, Some(tz), false)],
                 "cal-2",
             );
-            assert_eq!(converted[0].started_at, expected, "{windows_tz}");
+            assert_eq!(converted[0].started_at, expected_started_at, "{tz}");
+            if date_time == "2026-08-27T12:00:00.0000000" {
+                assert_eq!(converted[0].ended_at, "2026-08-27T12:00:00+00:00");
+            }
+        }
+    }
+
+    #[test]
+    fn outlook_all_day_keeps_the_calendar_date() {
+        for tz in ["UTC", "Pacific Standard Time"] {
+            let converted = convert_outlook_events(
+                vec![outlook_event_with_start(
+                    "2026-08-27T00:00:00.0000000",
+                    Some(tz),
+                    true,
+                )],
+                "cal-2",
+            );
+
+            assert_eq!(converted[0].started_at, "2026-08-27T00:00:00");
+            assert!(converted[0].is_all_day);
         }
     }
 }

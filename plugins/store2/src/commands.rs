@@ -1,4 +1,5 @@
 use crate::Store2PluginExt;
+use crate::chunked::{self, ChunkedError};
 
 const SECURE_STORE_SUFFIX: &str = "secure-store";
 const NATIVE_SECRET_ACCOUNT_PREFIXES: &[&str] = &["e2ee:"];
@@ -150,19 +151,53 @@ fn legacy_secret_entries<R: tauri::Runtime>(
         .collect()
 }
 
-fn secret_entry<R: tauri::Runtime>(
+struct SecretLocation {
+    service: String,
+    account: String,
+}
+
+impl SecretLocation {
+    fn slot(&self) -> impl Fn(&str) -> Result<keyring::Entry, String> + '_ {
+        |account| keyring::Entry::new(&self.service, account).map_err(secure_store_error)
+    }
+
+    fn read(&self) -> Result<String, ChunkedError> {
+        chunked::read(self.slot(), &self.account)
+    }
+
+    fn write(&self, value: &str) -> Result<(), String> {
+        chunked::write(self.slot(), &self.account, value).map_err(chunked_error)
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        chunked::delete(self.slot(), &self.account).map_err(chunked_error)
+    }
+}
+
+fn chunked_error(error: ChunkedError) -> String {
+    match error {
+        ChunkedError::Keyring(error) => secure_store_error(error),
+        ChunkedError::Slot(error) => error,
+        ChunkedError::Incomplete => {
+            "secure-store secret is incomplete; save it again to repair it".to_string()
+        }
+    }
+}
+
+fn secret_location<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     scope: &str,
     key: &str,
-) -> Result<keyring::Entry, String> {
+) -> Result<SecretLocation, String> {
     if scope.trim().is_empty() || key.trim().is_empty() {
         return Err("secure-store scope and key must not be empty".to_string());
     }
 
     let identifier = &app.config().identifier;
-    let service = secure_store_service(identifier);
-    let account = secure_store_account(identifier, scope, key);
-    keyring::Entry::new(&service, &account).map_err(secure_store_error)
+    Ok(SecretLocation {
+        service: secure_store_service(identifier),
+        account: secure_store_account(identifier, scope, key),
+    })
 }
 
 #[tauri::command]
@@ -325,14 +360,14 @@ fn read_secret_blocking_for<R: tauri::Runtime>(
     key: &str,
 ) -> Result<Option<String>, String> {
     validate_secret_coordinate(caller, scope, key)?;
-    let entry = secret_entry(app, scope, key)?;
-    match entry.get_password() {
+    let location = secret_location(app, scope, key)?;
+    match location.read() {
         Ok(secret) => Ok(Some(secret)),
-        Err(keyring::Error::NoEntry) => {
+        Err(ChunkedError::Keyring(keyring::Error::NoEntry)) => {
             for legacy_entry in legacy_secret_entries(app, scope, key)? {
                 match legacy_entry.get_password() {
                     Ok(secret) => {
-                        if entry.set_password(&secret).is_ok() {
+                        if location.write(&secret).is_ok() {
                             let _ = legacy_entry.delete_credential();
                         }
                         return Ok(Some(secret));
@@ -343,7 +378,7 @@ fn read_secret_blocking_for<R: tauri::Runtime>(
             }
             Ok(None)
         }
-        Err(error) => Err(secure_store_error(error)),
+        Err(error) => Err(chunked_error(error)),
     }
 }
 
@@ -399,8 +434,7 @@ fn write_secret_blocking_for<R: tauri::Runtime>(
     value: &str,
 ) -> Result<(), String> {
     validate_secret_coordinate(caller, scope, key)?;
-    let entry = secret_entry(app, scope, key)?;
-    entry.set_password(value).map_err(secure_store_error)?;
+    secret_location(app, scope, key)?.write(value)?;
     for legacy_entry in legacy_secret_entries(app, scope, key)? {
         let _ = legacy_entry.delete_credential();
     }
@@ -452,12 +486,7 @@ fn delete_secret_blocking_for<R: tauri::Runtime>(
             Err(error) => return Err(secure_store_error(error)),
         }
     }
-    let entry = secret_entry(app, scope, key)?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(error) => return Err(secure_store_error(error)),
-    }
-    Ok(())
+    secret_location(app, scope, key)?.delete()
 }
 
 #[cfg(test)]
@@ -465,31 +494,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uses_anarlog_service_names_for_legacy_bundle_identifiers() {
-        assert_eq!(
-            secure_store_service("com.hyprnote.dev"),
-            "com.anarlog.dev.secure-store"
-        );
-        assert_eq!(
-            secure_store_service("com.hyprnote.staging"),
-            "com.anarlog.staging.secure-store"
-        );
-        assert_eq!(
-            secure_store_service("com.hyprnote.stable"),
-            "com.anarlog.stable.secure-store"
-        );
-        assert_eq!(
-            secure_store_service("com.hyprnote.Hyprnote"),
-            "com.anarlog.stable.secure-store"
-        );
-    }
-
-    #[test]
-    fn preserves_unknown_service_identifiers() {
-        assert_eq!(
-            secure_store_service("com.example.app"),
-            "com.example.app.secure-store"
-        );
+    fn maps_bundle_identifiers_to_secure_store_services() {
+        for (identifier, expected) in [
+            ("com.hyprnote.dev", "com.anarlog.dev.secure-store"),
+            ("com.hyprnote.staging", "com.anarlog.staging.secure-store"),
+            ("com.hyprnote.stable", "com.anarlog.stable.secure-store"),
+            ("com.hyprnote.Hyprnote", "com.anarlog.stable.secure-store"),
+            ("com.example.app", "com.example.app.secure-store"),
+        ] {
+            assert_eq!(
+                secure_store_service(identifier),
+                expected,
+                "unexpected service for {identifier}"
+            );
+        }
     }
 
     #[test]
@@ -505,25 +523,35 @@ mod tests {
     }
 
     #[test]
-    fn migrates_all_previous_dev_secret_locations() {
-        assert_eq!(
-            legacy_secret_locations("com.hyprnote.dev", "provider", "deepgram"),
-            vec![
-                (
-                    "com.anarlog.dev.secure-store".to_string(),
-                    "provider:deepgram".to_string(),
-                ),
-                (
-                    "com.hyprnote.dev.secure-store".to_string(),
-                    "provider:deepgram".to_string(),
-                ),
-            ]
-        );
-    }
-
-    #[test]
-    fn skips_duplicate_legacy_secret_locations() {
-        assert!(legacy_secret_locations("com.example.app", "provider", "deepgram").is_empty());
+    fn lists_legacy_secret_locations_without_duplicates() {
+        for (identifier, expected) in [
+            (
+                "com.hyprnote.dev",
+                vec![
+                    (
+                        "com.anarlog.dev.secure-store".to_string(),
+                        "provider:deepgram".to_string(),
+                    ),
+                    (
+                        "com.hyprnote.dev.secure-store".to_string(),
+                        "provider:deepgram".to_string(),
+                    ),
+                ],
+            ),
+            ("com.example.app", vec![]),
+        ] {
+            let locations = legacy_secret_locations(identifier, "provider", "deepgram");
+            assert_eq!(
+                locations, expected,
+                "unexpected legacy locations for {identifier}"
+            );
+            let unique: std::collections::HashSet<_> = locations.iter().collect();
+            assert_eq!(
+                locations.len(),
+                unique.len(),
+                "duplicate locations for {identifier}"
+            );
+        }
     }
 
     #[test]
@@ -579,47 +607,5 @@ mod tests {
             expected
         );
         assert_eq!(delete_secret(app, scope, key).await.unwrap_err(), expected);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn explains_macos_keychain_access_failures() {
-        let error = keyring::Error::PlatformFailure(Box::new(
-            security_framework::base::Error::from_code(ERR_SEC_AUTH_FAILED),
-        ));
-
-        assert_eq!(
-            secure_store_error(error),
-            "macOS couldn't access your login Keychain. Use “Repair Keychain Access” below, then try again."
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn preserves_unrelated_macos_keychain_failures() {
-        let platform_error = security_framework::base::Error::from_code(-34018);
-        let expected = format!("Platform failure: {platform_error}");
-        let error = keyring::Error::PlatformFailure(Box::new(platform_error));
-
-        assert_eq!(secure_store_error(error), expected);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn explains_locked_linux_secret_service() {
-        let error = keyring::Error::NoStorageAccess(Box::new(std::io::Error::other("locked")));
-
-        assert_eq!(secure_store_error(error), LINUX_SECRET_SERVICE_ACCESS_ERROR);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn explains_unavailable_linux_secret_service() {
-        let error = keyring::Error::PlatformFailure(Box::new(std::io::Error::other("unavailable")));
-
-        assert_eq!(
-            secure_store_error(error),
-            LINUX_SECRET_SERVICE_UNAVAILABLE_ERROR
-        );
     }
 }

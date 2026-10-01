@@ -2,10 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import type { HumanRecord } from "./queries";
+import type { HumanRecord, OrganizationRecord } from "./queries";
 
 const mocks = vi.hoisted(() => ({
   humans: [] as HumanRecord[],
+  organizations: [] as OrganizationRecord[],
   togglePin: vi.fn(),
   selectContact: vi.fn(),
   contextMenu: vi.fn(),
@@ -36,7 +37,7 @@ vi.mock("~/store/zustand/tabs", () => ({
 }));
 vi.mock("./queries", () => ({
   useHumans: () => mocks.humans,
-  useOrganizations: () => [],
+  useOrganizations: () => mocks.organizations,
   useHumanSessions: () => [],
   toggleContactPin: mocks.togglePin,
   deleteHuman: vi.fn(),
@@ -101,6 +102,7 @@ beforeEach(() => {
   mocks.ownerId = "self";
   mocks.authId = null;
   mocks.humans = [human("other", "Alice", true), human("self", "Zoe")];
+  mocks.organizations = [];
   mocks.togglePin.mockResolvedValue(undefined);
 });
 afterEach(cleanup);

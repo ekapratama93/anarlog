@@ -56,8 +56,21 @@ fn xcrun(developer_dir: Option<&Path>) -> Command {
 
 #[cfg(target_os = "macos")]
 fn has_metal_compiler(developer_dir: Option<&Path>) -> bool {
-    xcrun(developer_dir)
+    let found = xcrun(developer_dir)
         .args(["--find", "metal"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+
+    found && metal_compiler_runs(developer_dir)
+}
+
+/// Xcode 26 installs `metal` as a stub that exits non-zero until the Metal
+/// Toolchain component is downloaded, so locating the binary is not enough to
+/// know it can compile anything.
+#[cfg(target_os = "macos")]
+fn metal_compiler_runs(developer_dir: Option<&Path>) -> bool {
+    xcrun(developer_dir)
+        .args(["metal", "--version"])
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -70,20 +83,34 @@ fn metal_developer_dir() -> Option<PathBuf> {
         return None;
     }
 
-    let developer_dir = ["/Applications/Xcode.app", "/Applications/Xcode-beta.app"]
+    let installed = ["/Applications/Xcode.app", "/Applications/Xcode-beta.app"]
         .into_iter()
         .map(|app| PathBuf::from(app).join("Contents/Developer"))
-        .find(|candidate| has_metal_compiler(Some(candidate)));
+        .filter(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
 
-    if developer_dir.is_none() {
-        panic!(
-            "no Metal compiler found; install Xcode, select it with \
-             `sudo xcode-select -s /Applications/Xcode.app`, then run \
-             `xcodebuild -downloadComponent MetalToolchain`"
-        );
+    if let Some(developer_dir) = installed
+        .iter()
+        .find(|candidate| has_metal_compiler(Some(candidate)))
+    {
+        return Some(developer_dir.clone());
     }
 
-    developer_dir
+    let Some(developer_dir) = installed.first() else {
+        panic!(
+            "no Metal compiler found; the Command Line Tools do not ship one. \
+             Install Xcode, then run `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+             xcodebuild -downloadComponent MetalToolchain` and rebuild"
+        );
+    };
+
+    panic!(
+        "no usable Metal compiler; {} is missing the Metal Toolchain component. \
+         Run `DEVELOPER_DIR={} xcodebuild -downloadComponent MetalToolchain` and rebuild \
+         (no sudo or `xcode-select` change is needed)",
+        developer_dir.display(),
+        developer_dir.display()
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -203,7 +230,7 @@ fn prepare_swift_package(swift_build_dir: &Path) {
     run_command(command, "resolving Soniqo Swift dependencies");
 
     patch_speech_swift_manifest(swift_build_dir);
-    patch_huggingface_downloader_anonymous_hub_api(swift_build_dir);
+    patch_huggingface_transfer_anonymous_hub_auth(swift_build_dir);
     patch_parakeet_streaming_offline_mode(swift_build_dir);
 }
 
@@ -263,22 +290,22 @@ fn patch_speech_swift_manifest(swift_build_dir: &Path) {
 include!("src/hub_anonymous.rs");
 
 #[cfg(target_os = "macos")]
-fn patch_huggingface_downloader_anonymous_hub_api(swift_build_dir: &Path) {
+fn patch_huggingface_transfer_anonymous_hub_auth(swift_build_dir: &Path) {
     let path = swift_build_dir
         .join("checkouts")
         .join("speech-swift")
         .join("Sources")
         .join("AudioCommon")
-        .join("HuggingFaceDownloader.swift");
+        .join("HuggingFaceTransfer.swift");
     let contents = fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
-            "failed to read Soniqo HuggingFace downloader source {}: {error}",
+            "failed to read Soniqo HuggingFace transfer source {}: {error}",
             path.display()
         )
     });
-    let patched = patch_huggingface_downloader_source(&contents).unwrap_or_else(|error| {
+    let patched = patch_huggingface_transfer_source(&contents).unwrap_or_else(|error| {
         panic!(
-            "failed to patch Soniqo HuggingFace downloader anonymous Hub API in {}: {error}",
+            "failed to patch Soniqo HuggingFace transfer anonymous Hub auth in {}: {error}",
             path.display()
         )
     });
@@ -290,7 +317,7 @@ fn patch_huggingface_downloader_anonymous_hub_api(swift_build_dir: &Path) {
     let mut permissions = fs::metadata(&path)
         .unwrap_or_else(|error| {
             panic!(
-                "failed to read permissions for Soniqo HuggingFace downloader source {}: {error}",
+                "failed to read permissions for Soniqo HuggingFace transfer source {}: {error}",
                 path.display()
             )
         })
@@ -299,7 +326,7 @@ fn patch_huggingface_downloader_anonymous_hub_api(swift_build_dir: &Path) {
         permissions.set_readonly(false);
         fs::set_permissions(&path, permissions).unwrap_or_else(|error| {
             panic!(
-                "failed to make Soniqo HuggingFace downloader source writable {}: {error}",
+                "failed to make Soniqo HuggingFace transfer source writable {}: {error}",
                 path.display()
             )
         });
@@ -307,7 +334,7 @@ fn patch_huggingface_downloader_anonymous_hub_api(swift_build_dir: &Path) {
 
     fs::write(&path, patched).unwrap_or_else(|error| {
         panic!(
-            "failed to patch Soniqo HuggingFace downloader source {}: {error}",
+            "failed to patch Soniqo HuggingFace transfer source {}: {error}",
             path.display()
         )
     });
@@ -561,6 +588,13 @@ fn main() {
             );
             return;
         }
+
+        // Only the MLX metallib step below needs the Metal compiler (SwiftPM
+        // cannot build `.metal` files), but check the toolchain up front.
+        // Otherwise a missing Metal Toolchain only surfaces after the
+        // multi-minute Swift package build, buried inside a nested build-script
+        // panic.
+        metal_developer_dir();
 
         let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
         let swift_build_dir = out_dir.join("swift-rs").join("soniqo-swift");

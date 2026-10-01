@@ -859,6 +859,181 @@
         ]
       }
     },
+    "/nango/google-drive/export": {
+      "post": {
+        "tags": [
+          "nango"
+        ],
+        "operationId": "google_drive_export_markdown",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DriveExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveExportFile"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/nango/google-drive/folder": {
+      "post": {
+        "tags": [
+          "nango"
+        ],
+        "operationId": "google_drive_validate_folder",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DriveFolderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveFolder"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/nango/google-drive/picker-complete": {
+      "post": {
+        "tags": [
+          "nango"
+        ],
+        "operationId": "google_drive_picker_complete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PickerComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveFolder"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/nango/google-drive/picker-start": {
+      "post": {
+        "tags": [
+          "nango"
+        ],
+        "operationId": "google_drive_picker_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DriveConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PickerStart"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/nango/google-drive/prepare-export": {
+      "post": {
+        "tags": [
+          "nango"
+        ],
+        "operationId": "google_drive_prepare_export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrivePrepareExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveExportFile"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/nango/session": {
       "post": {
         "tags": [
@@ -3624,6 +3799,76 @@
         ]
       }
     },
+    "/sync/meetings/{meeting_key}/devices": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "operationId": "heartbeat_meeting_device",
+        "parameters": [
+          {
+            "name": "meeting_key",
+            "in": "path",
+            "description": "Opaque key derived from the calendar event",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-device-fingerprint",
+            "in": "header",
+            "description": "Fingerprint of the calling device",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeetingDeviceHeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Devices present for the meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDevicesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid meeting key or device fingerprint"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Anarlog Pro subscription required"
+          },
+          "404": {
+            "description": "The calling device is not a registered sync device"
+          },
+          "502": {
+            "description": "Device service unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/sync/replica/credentials": {
       "post": {
         "tags": [
@@ -3873,6 +4118,49 @@
           },
           "502": {
             "description": "Shared attachment service unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/sync/shares/{share_id}/live/ticket": {
+      "post": {
+        "tags": [
+          "sync"
+        ],
+        "summary": "Issues a short-lived, HMAC-signed ticket that authorizes one WebSocket\nconnection to a shared note's live document. Browsers cannot attach a bearer\nheader to a WebSocket upgrade, so the ticket carries the resolved capability\ninstead and the socket route verifies it without touching Supabase.",
+        "operationId": "create_live_ticket",
+        "parameters": [
+          {
+            "name": "share_id",
+            "in": "path",
+            "description": "Shared note ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveTicketResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No access to the shared note"
+          },
+          "404": {
+            "description": "Shared note not found"
           }
         },
         "security": [
@@ -7091,6 +7379,135 @@
           }
         }
       },
+      "DriveConnectionRequest": {
+        "type": "object",
+        "required": [
+          "connection_id"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DriveExportFile": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "url"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "DriveExportFormat": {
+        "type": "string",
+        "enum": [
+          "markdown",
+          "google_docs"
+        ]
+      },
+      "DriveExportRequest": {
+        "type": "object",
+        "required": [
+          "connection_id",
+          "folder_id",
+          "meeting_id",
+          "file_id",
+          "filename",
+          "markdown"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/DriveExportFormat"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "meeting_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DriveFolder": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "drive_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "DriveFolderRequest": {
+        "type": "object",
+        "required": [
+          "connection_id",
+          "folder_id"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DrivePrepareExportRequest": {
+        "type": "object",
+        "required": [
+          "connection_id",
+          "folder_id",
+          "meeting_id"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/DriveExportFormat"
+          },
+          "meeting_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "E2eeDeviceEnrollmentPackage": {
         "type": "object",
         "required": [
@@ -9285,6 +9702,39 @@
           }
         }
       },
+      "LiveCapability": {
+        "type": "string",
+        "enum": [
+          "editor",
+          "viewer"
+        ]
+      },
+      "LiveTicketResponse": {
+        "type": "object",
+        "required": [
+          "ticket",
+          "capability",
+          "contentRevision",
+          "expiresInSeconds"
+        ],
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/LiveCapability"
+          },
+          "contentRevision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expiresInSeconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "ticket": {
+            "type": "string"
+          }
+        }
+      },
       "Location": {
         "type": "object",
         "properties": {
@@ -9414,6 +9864,13 @@
           "ended_at": {
             "type": "string"
           },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder path such as `Projects/Launch`; null when the meeting is not in a folder."
+          },
           "id": {
             "type": "string"
           },
@@ -9465,6 +9922,61 @@
           }
         }
       },
+      "MeetingDevice": {
+        "type": "object",
+        "required": [
+          "deviceFingerprint",
+          "primary"
+        ],
+        "properties": {
+          "deviceFingerprint": {
+            "type": "string"
+          },
+          "deviceName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "primary": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MeetingDeviceHeartbeatRequest": {
+        "type": "object",
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/MeetingDeviceIntent"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MeetingDeviceIntent": {
+        "type": "string",
+        "enum": [
+          "present",
+          "claim",
+          "release"
+        ]
+      },
+      "MeetingDevicesResponse": {
+        "type": "object",
+        "required": [
+          "devices"
+        ],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingDevice"
+            }
+          }
+        }
+      },
       "MeetingExport": {
         "allOf": [
           {
@@ -9505,6 +10017,13 @@
           },
           "ended_at": {
             "type": "string"
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Folder path such as `Projects/Launch`; null when the meeting is not in a folder."
           },
           "id": {
             "type": "string"
@@ -10293,6 +10812,41 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PickerComplete": {
+        "type": "object",
+        "required": [
+          "state",
+          "code",
+          "folder_id"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PickerStart": {
+        "type": "object",
+        "required": [
+          "authorization_url",
+          "state"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },

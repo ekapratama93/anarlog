@@ -5,6 +5,7 @@ import {
   events as windowsEvents,
   getCurrentWebviewWindowLabel,
 } from "@anlg/plugin-windows";
+import { useMountEffect } from "@anlg/ui/hooks/use-mount-effect";
 
 import {
   openNewNoteAndListen,
@@ -19,12 +20,13 @@ import { MeetingImportSync } from "~/services/meeting-import-sync";
 import { getOrCreateSessionForEventId } from "~/session/queries";
 import { WorkspaceInvitationToasts } from "~/settings/team/invitation-toast";
 import { useMyWorkspacesWithMirror } from "~/settings/team/mirror";
-import { useMountEffect } from "~/shared/hooks/useMountEffect";
+import { useZoomShortcuts } from "~/shared/zoom";
 import { UndoDeleteToast } from "~/sidebar/toast/undo-delete-toast";
 import { isTabInputSupported, useTabs } from "~/store/zustand/tabs";
 
 export default function MainAppLayout() {
   useNavigationEvents();
+  useZoomShortcuts();
 
   return (
     <AuthProvider>

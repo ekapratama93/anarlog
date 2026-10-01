@@ -25,6 +25,7 @@ export type TranscriptSegment = {
   text: string;
   speaker: string;
   startMs: number;
+  wordCount: number;
 };
 
 type Word = {
@@ -139,7 +140,9 @@ export function transcriptSegments(
       }
     }
   }
-  const result: (Omit<TranscriptSegment, "text"> & { parts: string[] })[] = [];
+  const result: (Omit<TranscriptSegment, "text" | "wordCount"> & {
+    parts: string[];
+  })[] = [];
   let previousIdentity: string | undefined;
   for (const word of words) {
     if (!word.text.trim()) continue;
@@ -167,5 +170,6 @@ export function transcriptSegments(
   return result.map(({ parts, ...segment }) => ({
     ...segment,
     text: parts.join(" ").replace(/\s+/g, " ").trim(),
+    wordCount: parts.length,
   }));
 }

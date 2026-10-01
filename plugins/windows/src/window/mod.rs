@@ -3,6 +3,7 @@ pub(crate) mod floating_bar;
 pub(crate) mod live_caption;
 mod v1;
 
+#[cfg(any(test, not(target_os = "macos")))]
 pub(crate) fn exclude_from_capture(window: &tauri::WebviewWindow<tauri::Wry>) {
     if let Err(error) = window.set_content_protected(true) {
         tracing::debug!(
@@ -14,6 +15,7 @@ pub(crate) fn exclude_from_capture(window: &tauri::WebviewWindow<tauri::Wry>) {
 }
 
 pub type AppWindow = v1::AppWindow;
+#[cfg(not(target_os = "macos"))]
 pub(crate) use v1::MAIN_WINDOW_MIN_SIZE;
 
 pub trait WindowImpl:

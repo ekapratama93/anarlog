@@ -1,6 +1,7 @@
+import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { RefreshControl, Text, View } from "react-native";
 import Animated, {
   Easing,
   ReduceMotion,
@@ -42,10 +43,12 @@ import {
   dismissActionButtonCard,
   useActionButtonSetup,
 } from "@/quick-actions/action-button-setup";
-import { createStyleHook } from "@/settings/theme-provider";
+import { createStyleHook, useColors } from "@/settings/theme-provider";
+import { syncMobileNow } from "@/sync/mobile-sync";
 
 export default function HomeScreen() {
   const styles = useStyles();
+  const Colors = useColors();
   const router = useRouter();
   const auth = useAuth();
   const { items, isLoading, error, hasMore, loadMore, retry } =
@@ -54,6 +57,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   const [searching, setSearching] = useState(false);
+  const refresh = useMutation({ mutationFn: syncMobileNow });
   const actionButtonSetup = useActionButtonSetup();
   const showActionButtonCard =
     deviceHasActionButton &&
@@ -198,6 +202,17 @@ export default function HomeScreen() {
           }
           onScroll={onScroll}
           scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl
+              refreshing={refresh.isPending}
+              onRefresh={() => {
+                if (!refresh.isPending) refresh.mutate();
+              }}
+              tintColor={Colors.muted}
+              colors={[Colors.muted]}
+              progressBackgroundColor={Colors.background}
+            />
+          }
           ListHeaderComponent={
             showActionButtonCard ? (
               <ActionButtonCard

@@ -20,7 +20,7 @@ export const Route = createFileRoute("/app/note/$sessionId")({
   component: StandaloneNoteWindow,
 });
 
-export function StandaloneNoteWindow() {
+function StandaloneNoteWindow() {
   const { sessionId } = Route.useParams();
 
   return (

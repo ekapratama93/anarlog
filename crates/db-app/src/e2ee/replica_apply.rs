@@ -17,8 +17,9 @@ use super::replica_storage::{
     insert_apply_guard, insert_row, load_or_create_writer_id, load_row_local_states,
     load_row_local_states_from_pool, mark_local_state_for_republish,
     normalize_replica_payload_hashes, park_records, queue_dirty_row, read_column, read_field,
-    record_version_order, remove_apply_guard, replica_records_still_current, restore_local_payload,
-    row_changed_since_snapshot, row_exists, table_columns, update_field, upsert_local_state,
+    record_version_order, remove_apply_guard, replica_records_still_current,
+    requeue_incomplete_snapshot_records, restore_local_payload, row_changed_since_snapshot,
+    row_exists, table_columns, update_field, upsert_local_state,
 };
 use super::witness::repair_e2ee_replica_from_witness_bounded_cancellable;
 use super::{
@@ -36,6 +37,7 @@ pub async fn apply_e2ee_replica_changes(
         pool,
         keys,
         false,
+        true,
         E2EE_APPLY_ROW_LIMIT,
         E2EE_APPLY_BYTE_LIMIT,
         &|| false,
@@ -64,16 +66,53 @@ pub async fn apply_received_e2ee_replica_changes_with_witness(
     .await
 }
 
+/// How a received-replica apply round treats the CloudSync snapshot.
+///
+/// `snapshot_complete` says every record of the snapshot has been downloaded,
+/// so rows absent locally may be materialized (and rows parked while the
+/// download was incomplete are requeued first). `repair_witness` runs the
+/// bounded witness repair before applying; callers that drive witness repair
+/// themselves (CloudSync recovery) turn it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct E2eeReceivedApplyOptions {
+    pub snapshot_complete: bool,
+    pub repair_witness: bool,
+}
+
+impl E2eeReceivedApplyOptions {
+    pub fn from_snapshot_complete(snapshot_complete: bool) -> Self {
+        Self {
+            snapshot_complete,
+            repair_witness: snapshot_complete,
+        }
+    }
+}
+
 pub async fn apply_received_e2ee_replica_changes_with_witness_cancellable(
     pool: &SqlitePool,
     keys: &HashMap<String, WorkspaceKeyring>,
     snapshot_complete: bool,
     is_cancelled: impl Fn() -> bool + Sync,
 ) -> E2eeReplicaResult<E2eeReplicaStats> {
+    apply_received_e2ee_replica_changes_with_options_cancellable(
+        pool,
+        keys,
+        E2eeReceivedApplyOptions::from_snapshot_complete(snapshot_complete),
+        is_cancelled,
+    )
+    .await
+}
+
+pub async fn apply_received_e2ee_replica_changes_with_options_cancellable(
+    pool: &SqlitePool,
+    keys: &HashMap<String, WorkspaceKeyring>,
+    options: E2eeReceivedApplyOptions,
+    is_cancelled: impl Fn() -> bool + Sync,
+) -> E2eeReplicaResult<E2eeReplicaStats> {
     apply_received_e2ee_replica_changes_with_witness_bounded(
         pool,
         keys,
-        snapshot_complete,
+        options,
         E2EE_WITNESS_REPAIR_RECORD_LIMIT,
         E2EE_WITNESS_REPAIR_BYTE_LIMIT,
         &is_cancelled,
@@ -84,13 +123,17 @@ pub async fn apply_received_e2ee_replica_changes_with_witness_cancellable(
 pub(super) async fn apply_received_e2ee_replica_changes_with_witness_bounded(
     pool: &SqlitePool,
     keys: &HashMap<String, WorkspaceKeyring>,
-    snapshot_complete: bool,
+    options: E2eeReceivedApplyOptions,
     max_repair_records: i64,
     max_repair_bytes: usize,
     is_cancelled: &(impl Fn() -> bool + Sync),
 ) -> E2eeReplicaResult<E2eeReplicaStats> {
+    let E2eeReceivedApplyOptions {
+        snapshot_complete,
+        repair_witness,
+    } = options;
     check_e2ee_apply_cancellation(is_cancelled)?;
-    let repair = if snapshot_complete {
+    let repair = if repair_witness {
         repair_e2ee_replica_from_witness_bounded_cancellable(
             pool,
             keys,
@@ -107,10 +150,15 @@ pub(super) async fn apply_received_e2ee_replica_changes_with_witness_bounded(
         }
     };
     check_e2ee_apply_cancellation(is_cancelled)?;
+    if snapshot_complete {
+        requeue_incomplete_snapshot_records(pool).await?;
+        check_e2ee_apply_cancellation(is_cancelled)?;
+    }
     let mut stats = apply_e2ee_replica_changes_inner(
         pool,
         keys,
         true,
+        snapshot_complete,
         E2EE_APPLY_ROW_LIMIT,
         E2EE_APPLY_BYTE_LIMIT,
         is_cancelled,
@@ -258,6 +306,7 @@ pub(super) async fn apply_e2ee_replica_changes_inner(
     pool: &SqlitePool,
     keys: &HashMap<String, WorkspaceKeyring>,
     require_witness: bool,
+    snapshot_complete: bool,
     max_rows: usize,
     max_bytes: usize,
     is_cancelled: &(impl Fn() -> bool + Sync),
@@ -464,9 +513,11 @@ pub(super) async fn apply_e2ee_replica_changes_inner(
         }
         attempted_bytes = attempted_bytes.saturating_add(row_bytes);
         let mut records_by_field = BTreeMap::<String, DecryptedRecord>::new();
+        let mut unwitnessed_records = Vec::new();
         for record in encrypted_records {
             check_e2ee_apply_cancellation(is_cancelled)?;
             if require_witness && !record.witnessed {
+                unwitnessed_records.push(record);
                 continue;
             }
             let field = keyring.open_field(&record.workspace_id, &record.id, &record.payload)?;
@@ -503,7 +554,7 @@ pub(super) async fn apply_e2ee_replica_changes_inner(
                 records_by_field.insert(field_name, candidate);
             }
         }
-        load_remaining_chunk_records(
+        let mut unwitnessed_fields = load_remaining_chunk_records(
             pool,
             keyring,
             (&workspace_id, &table, &row_id),
@@ -512,6 +563,19 @@ pub(super) async fn apply_e2ee_replica_changes_inner(
             &mut records_by_field,
         )
         .await?;
+        for record in unwitnessed_records {
+            check_e2ee_apply_cancellation(is_cancelled)?;
+            let Ok(field) = keyring.open_field(&record.workspace_id, &record.id, &record.payload)
+            else {
+                continue;
+            };
+            if field.table == table
+                && field.row_id == row_id
+                && !records_by_field.contains_key(&field.field)
+            {
+                unwitnessed_fields += 1;
+            }
+        }
         let mut records = records_by_field.into_values().collect::<Vec<_>>();
 
         check_e2ee_apply_cancellation(is_cancelled)?;
@@ -577,6 +641,41 @@ pub(super) async fn apply_e2ee_replica_changes_inner(
             .is_some_and(|state| state.payload_hash == manifest.payload_hash);
         let row_was_present = row_exists(&mut transaction, &table, &workspace_id, &row_id).await?;
         rollback_if_cancelled!(transaction, is_cancelled);
+        // While the CloudSync snapshot is still downloading, a row absent locally
+        // may be missing records that have not arrived yet, so it is parked
+        // until the snapshot completes and requeued from there.
+        if !row_was_present && !manifest.field.deleted && !snapshot_complete {
+            stats.deferred_incomplete_snapshot_rows += 1;
+            remove_apply_guard(&mut transaction, &workspace_id, &table, &row_id).await?;
+            rollback_if_cancelled!(transaction, is_cancelled);
+            let parked = pending
+                .iter()
+                .map(|(record_id, generation)| ParkedRecord {
+                    record_id: record_id.clone(),
+                    workspace_id: workspace_id.clone(),
+                    generation: *generation,
+                    reason: E2eeParkReason::IncompleteSnapshot,
+                    table_name: table.clone(),
+                    field_name: String::new(),
+                })
+                .collect::<Vec<_>>();
+            park_records(&mut transaction, &parked).await?;
+            rollback_if_cancelled!(transaction, is_cancelled);
+            commit_e2ee_apply_transaction(transaction, is_cancelled).await?;
+            continue;
+        }
+        // A row that does not exist locally yet waits until every field that
+        // only exists in unwitnessed form is witnessed, so readers never see
+        // an identity-only row. The witness merge re-queues the records.
+        if !row_was_present && !manifest.field.deleted && unwitnessed_fields > 0 {
+            stats.deferred_unwitnessed_rows += 1;
+            remove_apply_guard(&mut transaction, &workspace_id, &table, &row_id).await?;
+            rollback_if_cancelled!(transaction, is_cancelled);
+            delete_reconciled_replica_entries_in_transaction(&mut transaction, &pending).await?;
+            rollback_if_cancelled!(transaction, is_cancelled);
+            commit_e2ee_apply_transaction(transaction, is_cancelled).await?;
+            continue;
+        }
         let mut row_materialized = false;
 
         if !manifest_unchanged {
@@ -1059,7 +1158,7 @@ async fn load_remaining_chunk_records(
     columns: &HashSet<String>,
     require_witness: bool,
     records_by_field: &mut BTreeMap<String, DecryptedRecord>,
-) -> E2eeReplicaResult<()> {
+) -> E2eeReplicaResult<u64> {
     let (workspace_id, table, row_id) = row;
     let mut missing = Vec::new();
     for column in columns
@@ -1084,12 +1183,13 @@ async fn load_remaining_chunk_records(
         }
     }
     if missing.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     missing.sort_unstable();
     missing.dedup();
+    let mut unwitnessed_fields = BTreeSet::new();
     for record in load_encrypted_records_by_id(pool, &missing).await? {
-        if record.workspace_id != workspace_id || (require_witness && !record.witnessed) {
+        if record.workspace_id != workspace_id {
             continue;
         }
         let Ok(field) = keyring.open_field(&record.workspace_id, &record.id, &record.payload)
@@ -1097,6 +1197,10 @@ async fn load_remaining_chunk_records(
             continue;
         };
         if field.table != table || field.row_id != row_id {
+            continue;
+        }
+        if require_witness && !record.witnessed {
+            unwitnessed_fields.insert(field.field);
             continue;
         }
         let payload_hash = anlg_e2ee::payload_hash(&record.payload);
@@ -1110,7 +1214,8 @@ async fn load_remaining_chunk_records(
                 field,
             });
     }
-    Ok(())
+    unwitnessed_fields.retain(|field| !records_by_field.contains_key(field));
+    Ok(unwitnessed_fields.len() as u64)
 }
 
 /// Rebuilds a chunked column from its chunk records, chunk by chunk: a chunk

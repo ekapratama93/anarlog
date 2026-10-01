@@ -614,35 +614,40 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_audio_processing_timeout_is_retryable() {
-        let classified = classify_audio_processing_message("request timed out".to_string());
-        assert!(matches!(classified, BatchAttemptError::Retryable(_)));
+    fn classifies_audio_processing_messages_by_retryability() {
+        let cases = [("request timed out", true), ("invalid language", false)];
+
+        for (message, retryable) in cases {
+            let classified = classify_audio_processing_message(message.to_string());
+            assert_eq!(
+                matches!(classified, BatchAttemptError::Retryable(_)),
+                retryable,
+                "{message}"
+            );
+        }
     }
 
     #[test]
-    fn test_classify_audio_processing_invalid_is_client() {
-        let classified = classify_audio_processing_message("invalid language".to_string());
-        assert!(matches!(classified, BatchAttemptError::Client(_)));
-    }
-
-    #[test]
-    fn test_provider_failure_retryable_maps_to_retryable() {
+    fn provider_failures_map_to_retry_auth_and_client_classes() {
         let err = map_provider_error(owhisper_client::Error::ProviderFailure {
             message: "transient upstream failure".to_string(),
             retryable: true,
             status: None,
         });
         assert!(matches!(err, BatchAttemptError::Retryable(_)));
-    }
 
-    #[test]
-    fn test_provider_failure_with_status_401_maps_to_auth() {
         let err = map_provider_error(owhisper_client::Error::ProviderFailure {
             message: "unauthorized".to_string(),
             retryable: true,
             status: Some(reqwest::StatusCode::UNAUTHORIZED),
         });
         assert!(matches!(err, BatchAttemptError::Auth(_)));
+
+        let err = map_provider_error(owhisper_client::Error::ProviderConfiguration {
+            provider: "test".to_string(),
+            message: "invalid endpoint".to_string(),
+        });
+        assert!(matches!(err, BatchAttemptError::Client(_)));
     }
 
     #[test]
@@ -667,14 +672,5 @@ mod tests {
         assert!(matches!(err, BatchAttemptError::Client(_)));
         assert_eq!(err.message(), "quota exceeded");
         assert!(anlg_user_error::is_user_error_text(err.message()));
-    }
-
-    #[test]
-    fn test_provider_configuration_maps_to_non_retryable_client_error() {
-        let err = map_provider_error(owhisper_client::Error::ProviderConfiguration {
-            provider: "test".to_string(),
-            message: "invalid endpoint".to_string(),
-        });
-        assert!(matches!(err, BatchAttemptError::Client(_)));
     }
 }

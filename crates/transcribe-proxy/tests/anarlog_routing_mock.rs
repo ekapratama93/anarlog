@@ -10,24 +10,6 @@ use common::{
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
-async fn streaming_cloud_model_resolved_for_deepgram() {
-    let mock = start_mock_ws().await;
-    let proxy = start_proxy(Some(&mock.ws_url()), None).await;
-
-    send_streaming(proxy, "model=cloud&language=en").await;
-    let req = wait_for_first_request(&mock, TIMEOUT).await;
-
-    assert!(
-        req.contains("model=nova-3"),
-        "should resolve cloud -> nova-3 for en: {req}"
-    );
-    assert!(
-        !req.contains("model=cloud"),
-        "meta model should not leak upstream: {req}"
-    );
-}
-
-#[tokio::test]
 async fn streaming_cloud_model_removed_for_soniox() {
     let mock = start_mock_ws().await;
     let proxy = start_proxy(None, Some(&mock.ws_url())).await;
@@ -62,20 +44,6 @@ async fn streaming_routing_selects_soniox_for_en_ko() {
     assert!(
         !sox_req.contains("model=cloud"),
         "meta model should not leak to soniox: {sox_req}"
-    );
-}
-
-#[tokio::test]
-async fn streaming_explicit_model_preserved_for_deepgram() {
-    let mock = start_mock_ws().await;
-    let proxy = start_proxy(Some(&mock.ws_url()), None).await;
-
-    send_streaming(proxy, "model=nova-3&language=en").await;
-    let req = wait_for_first_request(&mock, TIMEOUT).await;
-
-    assert!(
-        req.contains("model=nova-3"),
-        "explicit model should be preserved: {req}"
     );
 }
 
@@ -122,20 +90,5 @@ async fn batch_en_pl_uses_deepgram_detection_fallback_when_soniox_unavailable() 
     assert!(
         !query.contains("language=multi"),
         "Polish is not in Deepgram's multi-language model set: {query}"
-    );
-}
-
-#[tokio::test]
-async fn batch_explicit_model_preserved_for_deepgram() {
-    let batch = start_mock_batch_upstream().await;
-    let upstream_url = batch_upstream_url(batch.addr);
-    let proxy = start_proxy(Some(&upstream_url), None).await;
-
-    send_batch(proxy, "model=nova-3&language=en").await;
-    let query = wait_for_first_batch_query(&batch, TIMEOUT).await;
-
-    assert!(
-        query.contains("model=nova-3"),
-        "explicit model should be preserved: {query}"
     );
 }

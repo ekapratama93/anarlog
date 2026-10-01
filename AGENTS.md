@@ -15,6 +15,14 @@ Anarlog is a pnpm and Rust workspace. Read the nearest `AGENTS.md` before changi
 
 Sessions are the core entity: all notes are backed by sessions. ProseMirror powers the editor (`packages/editor`, via `@handlewithcare/react-prosemirror`); documents use TipTap-dialect ProseMirror JSON, with converters/validation in `crates/tiptap`.
 
+## GitHub Enterprise API access
+
+- For `fastrepl/char` and `fastrepl/anarlog`, prefer `~/.local/bin/gh-enterprise` over plain `gh` for GitHub API, PR, issue, and CI operations when the helper is installed. Examples: `gh-enterprise api repos/fastrepl/anarlog/pulls/123`, `gh-enterprise pr view 123 -R fastrepl/anarlog`, and `gh-enterprise api graphql -f query='...'`.
+- The helper renews a GitHub App installation token automatically. Both repositories share its verified REST quota of 15,000 requests/hour and GraphQL quota of 10,000 points/hour; secondary limits still apply. Batch reads, paginate completely, and respect reset/retry headers instead of repeated retries.
+- The app supports repository contents, PR/issue updates, and Actions writes. Writes appear as the app bot. Existing authorization, review, merge, and environment-selection requirements still apply; possessing the token is not permission to act.
+- Git, GitButler, and connectors do not automatically use this helper. Use existing user authentication when an endpoint requires a user identity or unsupported permissions; do not bypass permission failures or broaden app access automatically.
+- Credentials stay outside the repository. Never print tokens or keys, commit them, or put them in command arguments. If the helper is missing on another machine, report the setup gap and use existing authorized access; do not assume the higher quota applies to plain `gh`.
+
 ## Commands
 
 - Install: `pnpm install --frozen-lockfile`. Match CI's Node 22, `package.json#packageManager`, and `rust-toolchain.toml`; keep lockfiles in sync with intentional dependency changes.
@@ -38,6 +46,7 @@ Treat `.github/workflows/` and their composite actions as the source of truth fo
 - `ci.yaml`: run both license-boundary Python commands and the complete `node --test` command listed there. These run on every PR, including documentation-only changes.
 - `zizmor.yaml` runs on every PR. Reproduce `uvx zizmor --format sarif .` (save output outside the repository) with read-only GitHub access; report unavailable authenticated checks. Inspect the SARIF findings: a successful scan/upload does not mean zero findings. Fix findings introduced by workflow/action changes and report existing findings separately.
 - For TypeScript changes, run affected packages' typechecks and existing test scripts. For Rust changes, run affected crate checks/tests with the workflow's flags; retain `--locked`, feature selections, test filters, and Clippy's `-D warnings`. Add regression coverage for changed behavior, especially persistence, auth, billing, and recording lifecycles.
+- Decide what to test, delete, or leave untested with `.agents/skills/testing/SKILL.md`: one regression test per fix, no tests for CSS, copy, mock call counts, private state, or file layout. Structural and import-boundary rules belong in lint rules, not tests.
 
 ### Checks by component
 

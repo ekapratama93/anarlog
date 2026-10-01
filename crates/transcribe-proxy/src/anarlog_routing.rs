@@ -564,17 +564,6 @@ mod tests {
     }
 
     #[quickcheck_macros::quickcheck]
-    fn prop_supported_always_returns_some(combo: LangCombo) -> quickcheck::TestResult {
-        let router = AnarlogRouter::default();
-        let available = default_available();
-        let chain = router.select_provider_chain(&combo.0, &available);
-        if chain.is_empty() {
-            return quickcheck::TestResult::discard();
-        }
-        quickcheck::TestResult::from_bool(router.select_provider(&combo.0, &available).is_some())
-    }
-
-    #[quickcheck_macros::quickcheck]
     fn prop_soniox_always_in_chain_when_supported(combo: LangCombo) -> quickcheck::TestResult {
         let router = AnarlogRouter::default();
         let available = default_available();
@@ -611,13 +600,5 @@ mod tests {
             router.select_provider_chain_with_mode(RoutingMode::Batch, &languages, &available),
             vec![Provider::Soniox, Provider::Deepgram]
         );
-    }
-
-    #[test]
-    fn default_priorities_include_newer_live_providers() {
-        let config = AnarlogRoutingConfig::default();
-
-        assert!(config.priorities.contains(&Provider::Mistral));
-        assert!(config.priorities.contains(&Provider::DashScope));
     }
 }

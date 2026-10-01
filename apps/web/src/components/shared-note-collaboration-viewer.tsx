@@ -69,6 +69,7 @@ export function SharedNoteCollaborationViewer({
             excludedAttachmentIds={
               featuredAudio ? [featuredAudio.id] : undefined
             }
+            liveEditing={authenticatedNote?.capability === "editor"}
             manageAccess={authenticatedNote?.manageAccess ?? false}
             resolveAttachment={resolveAttachment}
             shareId={snapshot.shareId}

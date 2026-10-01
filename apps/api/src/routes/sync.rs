@@ -71,7 +71,7 @@ pub(crate) fn build_sync_routes(
             auth_state.clone().with_required_entitlement("hyprnote_pro"),
             auth::require_auth,
         ));
-    let web_edit_routes = anlg_api_sync::web_edit_router(state)
+    let web_edit_routes = anlg_api_sync::web_edit_router(state.clone())
         .route_layer(middleware::from_fn_with_state(
             session_share_rate_limit_state,
             rate_limit::rate_limit,
@@ -81,11 +81,15 @@ pub(crate) fn build_sync_routes(
             auth_state,
             auth::require_auth,
         ));
+    // Authenticated by a short-lived ticket minted under bearer auth above;
+    // browsers cannot attach Authorization headers to WebSocket upgrades.
+    let live_socket_routes = anlg_api_sync::live_socket_router(state);
 
     replica_routes
         .merge(cloudsync_routes)
         .merge(session_share_routes)
         .merge(web_edit_routes)
+        .merge(live_socket_routes)
 }
 
 pub(crate) fn router(env: &RuntimeConfig) -> Router {

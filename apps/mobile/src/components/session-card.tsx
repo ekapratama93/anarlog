@@ -1,7 +1,10 @@
 import MenuView, { type MenuAction } from "@expo/ui/community/menu";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { CornerCurve, Radius, Spacing, Typography } from "@/constants/theme";
 import { relativeLabel, type TimelineSession } from "@/data/timeline";
@@ -15,6 +18,8 @@ const DELETE_ACTIONS: MenuAction[] = [
     attributes: { destructive: true },
   },
 ];
+
+const SWIPE_ACTION_WIDTH = 88;
 
 export function SessionCard({
   session,
@@ -34,6 +39,7 @@ export function SessionCard({
   const styles = useStyles();
   const Colors = useColors();
   const [width, setWidth] = useState<number>();
+  const swipeableRef = useRef<SwipeableMethods>(null);
   const title = session.title || "Untitled";
   const folder = showFolder ? session.folderPath : "";
   const tags = showTags ? session.tags.map((tag) => `#${tag}`).join(" ") : "";
@@ -48,7 +54,9 @@ export function SessionCard({
 
   const content = (
     <Pressable
-      accessibilityHint={onDelete ? "Long press for actions" : undefined}
+      accessibilityHint={
+        onDelete ? "Long press or swipe left for actions" : undefined
+      }
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       onPress={onPress}
@@ -83,7 +91,7 @@ export function SessionCard({
     </Pressable>
   );
 
-  return (
+  const row = (
     <View
       onLayout={({ nativeEvent }) => {
         const nextWidth = nativeEvent.layout.width;
@@ -107,6 +115,40 @@ export function SessionCard({
         content
       )}
     </View>
+  );
+
+  if (!onDelete) return row;
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      friction={2}
+      overshootRight={false}
+      rightThreshold={SWIPE_ACTION_WIDTH / 2}
+      renderRightActions={() => (
+        <Pressable
+          accessibilityLabel={`Delete ${title}`}
+          accessibilityRole="button"
+          onPress={() => {
+            swipeableRef.current?.close();
+            onDelete();
+          }}
+          style={({ pressed }) => [
+            styles.swipeAction,
+            pressed && styles.swipeActionPressed,
+          ]}
+        >
+          <Ionicons
+            name="trash-outline"
+            size={20}
+            color={Colors.destructiveForeground}
+          />
+          <Text style={styles.swipeActionLabel}>Delete</Text>
+        </Pressable>
+      )}
+    >
+      {row}
+    </ReanimatedSwipeable>
   );
 }
 
@@ -132,6 +174,24 @@ const useStyles = createStyleHook((Colors) => ({
   },
   cardPressed: {
     backgroundColor: Colors.accentSurface,
+  },
+  swipeAction: {
+    width: SWIPE_ACTION_WIDTH,
+    marginLeft: Spacing.sm,
+    marginBottom: Spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.xs,
+    borderRadius: Radius.card,
+    borderCurve: CornerCurve.squircle,
+    backgroundColor: Colors.destructive,
+  },
+  swipeActionPressed: {
+    opacity: 0.8,
+  },
+  swipeActionLabel: {
+    ...Typography.caption,
+    color: Colors.destructiveForeground,
   },
   cardPlain: {
     borderColor: "transparent",

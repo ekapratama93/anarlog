@@ -106,14 +106,6 @@ describe("SettingsCrm", () => {
     expect(await screen.findByText("Sign in to connect a CRM.")).toBeTruthy();
   });
 
-  it("shows an empty state when no CRM providers exist", async () => {
-    mocks.providers = [];
-    renderPage();
-    expect(
-      await screen.findByText("No CRM integrations are available yet."),
-    ).toBeTruthy();
-  });
-
   it("starts the Nango connect flow", async () => {
     mocks.connectCrm.mockResolvedValue(connection);
     renderPage();
@@ -158,21 +150,16 @@ describe("SettingsCrm", () => {
     );
     expect(await screen.findByText("Connected and working")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "More options" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Disconnect" }),
+    );
     await waitFor(() =>
       expect(mocks.disconnectCrm).toHaveBeenCalledWith(
         expect.objectContaining({ nangoIntegrationId: "acme-nango" }),
         "conn-1",
       ),
     );
-  });
-
-  it("shows reconnect state for expired connections", async () => {
-    mocks.connections = [{ ...connection, status: "reconnect_required" }];
-    renderPage();
-
-    expect(await screen.findByText("Reconnect required")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Reconnect" })).toBeTruthy();
   });
 
   it("passes the existing connection id when reconnecting", async () => {

@@ -189,12 +189,12 @@ async fn rotated_keyring_authenticates_witness_history_from_a_retired_generation
 }
 
 #[tokio::test]
-async fn fresh_device_does_not_materialize_an_unwitnessed_snapshot() {
+async fn fresh_device_waits_for_every_row_record_to_be_witnessed() {
     let workspace_keys = keys("workspace-a");
     let source = test_db().await;
     sqlx::query(
-        "INSERT INTO sessions (id, workspace_id, owner_user_id, title)
-             VALUES ('session-1', 'workspace-a', 'user-a', 'Archived value')",
+        "INSERT INTO sessions (id, workspace_id, owner_user_id, title, created_at)
+             VALUES ('session-1', 'workspace-a', 'user-a', 'Witnessed later', '2024-01-01T00:00:00Z')",
     )
     .execute(source.pool())
     .await
@@ -203,8 +203,42 @@ async fn fresh_device_does_not_materialize_an_unwitnessed_snapshot() {
         .await
         .unwrap();
 
+    let key = &workspace_keys["workspace-a"];
+    let title_record_id = key.blind_field_id("sessions", "session-1", "title");
+    let encrypted: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, payload FROM e2ee_records WHERE workspace_id = 'workspace-a' ORDER BY id",
+    )
+    .fetch_all(source.pool())
+    .await
+    .unwrap();
+    let event = |index: usize, record_id: &str, payload: &str| E2eeWitnessEvent {
+        sequence: u64::try_from(index + 1).unwrap(),
+        record_id: record_id.to_string(),
+        workspace_id: "workspace-a".to_string(),
+        payload_hash: anlg_e2ee::payload_hash(payload),
+        payload: payload.to_string(),
+    };
+    let (title_records, other_records): (Vec<_>, Vec<_>) = encrypted
+        .iter()
+        .partition(|(record_id, _)| record_id == &title_record_id);
+    let first_events = other_records
+        .iter()
+        .enumerate()
+        .map(|(index, (record_id, payload))| event(index, record_id, payload))
+        .collect::<Vec<_>>();
+
     let fresh = test_db().await;
     copy_replica(source.pool(), fresh.pool()).await;
+    merge_e2ee_witness_events(fresh.pool(), key, "workspace-a", &first_events)
+        .await
+        .unwrap();
+    advance_e2ee_witness_cursor(
+        fresh.pool(),
+        "workspace-a",
+        first_events.last().unwrap().sequence,
+    )
+    .await
+    .unwrap();
     let stats = apply_e2ee_replica_changes_with_witness(fresh.pool(), &workspace_keys)
         .await
         .unwrap();
@@ -215,16 +249,49 @@ async fn fresh_device_does_not_materialize_an_unwitnessed_snapshot() {
             .await
             .unwrap();
     assert_eq!(materialized, 0);
-    assert!(stats.rejected_unwitnessed > 0);
+    assert_eq!(stats.deferred_unwitnessed_rows, 1);
+    let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_replica_pending")
+        .fetch_one(fresh.pool())
+        .await
+        .unwrap();
+    assert_eq!(pending, 0);
+
+    let title_events = title_records
+        .iter()
+        .enumerate()
+        .map(|(index, (record_id, payload))| event(index + first_events.len(), record_id, payload))
+        .collect::<Vec<_>>();
+    merge_e2ee_witness_events(fresh.pool(), key, "workspace-a", &title_events)
+        .await
+        .unwrap();
+    advance_e2ee_witness_cursor(
+        fresh.pool(),
+        "workspace-a",
+        title_events.last().unwrap().sequence,
+    )
+    .await
+    .unwrap();
+    let stats = apply_e2ee_replica_changes_with_witness(fresh.pool(), &workspace_keys)
+        .await
+        .unwrap();
+    assert_eq!(stats.deferred_unwitnessed_rows, 0);
+
+    let (title, created_at): (String, String) =
+        sqlx::query_as("SELECT title, created_at FROM sessions WHERE id = 'session-1'")
+            .fetch_one(fresh.pool())
+            .await
+            .unwrap();
+    assert_eq!(title, "Witnessed later");
+    assert_eq!(created_at, "2024-01-01T00:00:00Z");
 }
 
 #[tokio::test]
-async fn witnessed_snapshot_materializes_and_repairs_the_replica() {
+async fn fresh_device_parks_new_rows_until_the_snapshot_download_completes() {
     let workspace_keys = keys("workspace-a");
     let source = test_db().await;
     sqlx::query(
-        "INSERT INTO sessions (id, workspace_id, owner_user_id, title)
-             VALUES ('session-1', 'workspace-a', 'user-a', 'Witnessed value')",
+        "INSERT INTO sessions (id, workspace_id, owner_user_id, title, created_at)
+             VALUES ('session-1', 'workspace-a', 'user-a', 'Downloaded later', '2024-01-01T00:00:00Z')",
     )
     .execute(source.pool())
     .await
@@ -233,6 +300,8 @@ async fn witnessed_snapshot_materializes_and_repairs_the_replica() {
         .await
         .unwrap();
 
+    let key = &workspace_keys["workspace-a"];
+    let title_record_id = key.blind_field_id("sessions", "session-1", "title");
     let encrypted: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, payload FROM e2ee_records WHERE workspace_id = 'workspace-a' ORDER BY id",
     )
@@ -244,50 +313,84 @@ async fn witnessed_snapshot_materializes_and_repairs_the_replica() {
         .enumerate()
         .map(|(index, (record_id, payload))| E2eeWitnessEvent {
             sequence: u64::try_from(index + 1).unwrap(),
-            record_id: record_id.clone(),
+            record_id: record_id.to_string(),
             workspace_id: "workspace-a".to_string(),
             payload_hash: anlg_e2ee::payload_hash(payload),
-            payload: payload.clone(),
+            payload: payload.to_string(),
         })
         .collect::<Vec<_>>();
 
+    // Every witness has arrived, but the title record itself is still in flight.
     let fresh = test_db().await;
-    copy_replica(source.pool(), fresh.pool()).await;
-    merge_e2ee_witness_events(
-        fresh.pool(),
-        &workspace_keys["workspace-a"],
-        "workspace-a",
-        &events,
-    )
-    .await
-    .unwrap();
-    advance_e2ee_witness_cursor(fresh.pool(), "workspace-a", events.last().unwrap().sequence)
-        .await
-        .unwrap();
-    apply_e2ee_replica_changes_with_witness(fresh.pool(), &workspace_keys)
-        .await
-        .unwrap();
-
-    let title: String = sqlx::query_scalar("SELECT title FROM sessions WHERE id = 'session-1'")
-        .fetch_one(fresh.pool())
-        .await
-        .unwrap();
-    assert_eq!(title, "Witnessed value");
-
-    sqlx::query("DELETE FROM e2ee_records")
+    for (record_id, payload) in encrypted
+        .iter()
+        .filter(|(record_id, _)| record_id != &title_record_id)
+    {
+        sqlx::query(
+            "INSERT INTO e2ee_records (id, workspace_id, payload) VALUES (?, 'workspace-a', ?)",
+        )
+        .bind(record_id)
+        .bind(payload)
         .execute(fresh.pool())
         .await
         .unwrap();
-    apply_e2ee_replica_changes_with_witness(fresh.pool(), &workspace_keys)
+    }
+    merge_e2ee_witness_events(fresh.pool(), key, "workspace-a", &events)
         .await
         .unwrap();
+    advance_e2ee_witness_cursor(fresh.pool(), "workspace-a", events.last().unwrap().sequence)
+        .await
+        .unwrap();
+    let stats =
+        apply_received_e2ee_replica_changes_with_witness(fresh.pool(), &workspace_keys, false)
+            .await
+            .unwrap();
 
-    let repaired: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_records WHERE workspace_id = 'workspace-a'")
+    let materialized: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id = 'session-1'")
             .fetch_one(fresh.pool())
             .await
             .unwrap();
-    assert_eq!(repaired, i64::try_from(events.len()).unwrap());
+    assert_eq!(materialized, 0);
+    assert_eq!(stats.deferred_incomplete_snapshot_rows, 1);
+    assert_eq!(stats.parked_records, 0);
+    let parked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM e2ee_parked_records WHERE reason = 'incomplete_snapshot'",
+    )
+    .fetch_one(fresh.pool())
+    .await
+    .unwrap();
+    assert!(parked > 0);
+
+    copy_replica(source.pool(), fresh.pool()).await;
+    // CloudSync recovery drives witness repair itself but still reports a
+    // complete snapshot, so parked rows must be requeued on that path too.
+    let stats = apply_received_e2ee_replica_changes_with_options_cancellable(
+        fresh.pool(),
+        &workspace_keys,
+        E2eeReceivedApplyOptions {
+            snapshot_complete: true,
+            repair_witness: false,
+        },
+        || false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(stats.deferred_incomplete_snapshot_rows, 0);
+    assert_eq!(stats.repaired_witness_records, 0);
+
+    let (title, created_at): (String, String) =
+        sqlx::query_as("SELECT title, created_at FROM sessions WHERE id = 'session-1'")
+            .fetch_one(fresh.pool())
+            .await
+            .unwrap();
+    assert_eq!(title, "Downloaded later");
+    assert_eq!(created_at, "2024-01-01T00:00:00Z");
+    let parked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM e2ee_parked_records")
+        .fetch_one(fresh.pool())
+        .await
+        .unwrap();
+    assert_eq!(parked, 0);
 }
 
 #[tokio::test]

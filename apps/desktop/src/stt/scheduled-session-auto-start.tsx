@@ -1,10 +1,11 @@
 import { useRef } from "react";
 
+import { useMountEffect } from "@anlg/ui/hooks/use-mount-effect";
+
 import { isLockedFlag } from "~/lock/flag";
 import { useAppLock } from "~/lock/store";
 import { useSession } from "~/session/queries";
 import { useLatestRef } from "~/shared/hooks/useLatestRef";
-import { useMountEffect } from "~/shared/hooks/useMountEffect";
 import { type Tab, useTabs } from "~/store/zustand/tabs";
 import { useListener } from "~/stt/contexts";
 import {

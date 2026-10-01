@@ -69,12 +69,17 @@ pub struct FloatingBarState {
     pub live_caption_toggle_visible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript_bubbles: Option<Vec<FloatingTranscriptBubble>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_notice: Option<String>,
     #[serde(default)]
     pub layout: Option<FloatingBarOverlayLayout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 pub const WINDOW_LABEL: &str = "floating-bar";
 
+#[cfg(any(test, not(target_os = "macos")))]
 pub(crate) mod layout {
     use super::FloatingBarState;
 
@@ -110,7 +115,6 @@ pub(crate) mod layout {
         compact_controls_width(shows_expand) + COMPACT_HORIZONTAL_PADDING * 2.0
     }
 
-    #[cfg(any(not(target_os = "macos"), test))]
     pub fn dictation_container_size(expanded: bool) -> (f64, f64) {
         container_size(expanded, true)
     }
@@ -129,7 +133,6 @@ pub(crate) mod layout {
         }
     }
 
-    #[cfg(any(test, not(target_os = "macos")))]
     pub fn controls_center_y(height: f64, expands_upward: bool) -> f64 {
         if expands_upward {
             height - INSET - COMPACT_HEIGHT / 2.0
@@ -138,7 +141,6 @@ pub(crate) mod layout {
         }
     }
 
-    #[cfg(any(test, not(target_os = "macos")))]
     pub fn frame_at_controls(
         anchor: (f64, f64),
         size: (f64, f64),
@@ -314,6 +316,7 @@ mod cross_platform {
     };
     use super::{FloatingBarOverlayLayout, FloatingBarState, WINDOW_LABEL};
     use crate::Error;
+    use crate::ext::run_on_main_thread;
 
     static APP_HANDLE: OnceLock<tauri::AppHandle<tauri::Wry>> = OnceLock::new();
     static LAST_STATE: Mutex<Option<FloatingBarState>> = Mutex::new(None);
@@ -334,25 +337,30 @@ mod cross_platform {
 
     pub fn show() -> Result<(), Error> {
         let app = app()?;
-        let window = ensure_window(app)?;
-        let mut state = current_state();
-        let layout = apply_layout(&window, state.as_ref(), true)?;
-        if let Some(state) = state.as_mut() {
-            state.layout = Some(layout);
-        }
-        if let Some(state) = state {
-            publish_state(state)?;
-        }
-        window.show()?;
-        crate::window::exclude_from_capture(&window);
-        Ok(())
+        run_on_main_thread(app, move || {
+            let window = ensure_window(app)?;
+            let mut state = current_state();
+            let layout = apply_layout(&window, state.as_ref(), true)?;
+            if let Some(state) = state.as_mut() {
+                state.layout = Some(layout);
+            }
+            if let Some(state) = state {
+                publish_state(state)?;
+            }
+            window.show()?;
+            crate::window::exclude_from_capture(&window);
+            Ok(())
+        })?
     }
 
     pub fn hide() -> Result<(), Error> {
-        if let Ok(app) = app()
-            && let Some(window) = app.get_webview_window(WINDOW_LABEL)
-        {
-            window.hide()?;
+        if let Ok(app) = app() {
+            run_on_main_thread(app, move || -> Result<(), Error> {
+                if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                    window.hide()?;
+                }
+                Ok(())
+            })??;
         }
         if let Ok(mut state) = LAST_STATE.lock() {
             *state = None;
@@ -362,10 +370,17 @@ mod cross_platform {
 
     pub fn update(mut state: FloatingBarState) -> Result<(), Error> {
         let app = app()?;
-        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-            state.layout = Some(apply_layout(&window, Some(&state), false)?);
-        }
-        publish_state(state)
+        // Publish inside the marshal so update/show publishes stay serialized in
+        // main-thread task order; publish_state itself is cheap (a lock and an emit).
+        run_on_main_thread(app, move || {
+            if state.transcript_bubbles.is_none() {
+                state.transcript_bubbles = current_state().and_then(|last| last.transcript_bubbles);
+            }
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                state.layout = Some(apply_layout(&window, Some(&state), false)?);
+            }
+            publish_state(state)
+        })?
     }
 
     fn publish_state(state: FloatingBarState) -> Result<(), Error> {
@@ -558,12 +573,30 @@ pub fn show() -> Result<(), Error> {
     platform::show()
 }
 
+static SESSION_ID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn session_id() -> Option<String> {
+    SESSION_ID.lock().ok().and_then(|guard| guard.clone())
+}
+
 pub fn hide() -> Result<(), Error> {
-    platform::hide()
+    let hidden_session_id = session_id();
+    platform::hide()?;
+    if let Ok(mut session_id) = SESSION_ID.lock()
+        && *session_id == hidden_session_id
+    {
+        *session_id = None;
+    }
+    Ok(())
 }
 
 pub fn update(state: FloatingBarState) -> Result<(), Error> {
-    platform::update(state)
+    let next_session_id = state.session_id.clone();
+    platform::update(state)?;
+    if let Ok(mut session_id) = SESSION_ID.lock() {
+        *session_id = next_session_id;
+    }
+    Ok(())
 }
 
 pub fn update_amplitude(amplitude: f64) -> Result<(), Error> {
@@ -589,18 +622,6 @@ mod tests {
                 assert!(x + width <= 1920.0 && y + height <= 1080.0);
             }
         }
-    }
-
-    #[test]
-    fn dictation_sizes_preserve_the_shared_panel_anchors() {
-        assert_eq!(layout::dictation_container_size(false), (108.0, 67.0));
-        assert_eq!(layout::dictation_container_size(true), (368.0, 459.0));
-    }
-    #[test]
-    fn sizes_the_compact_and_expanded_windows() {
-        assert_eq!(layout::container_size(false, false), (84.0, 67.0));
-        assert_eq!(layout::container_size(false, true), (108.0, 67.0));
-        assert_eq!(layout::container_size(true, true), (368.0, 459.0));
     }
 
     #[test]

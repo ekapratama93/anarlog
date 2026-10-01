@@ -47,6 +47,9 @@ const shared = z.object({
   redirect: z.string().optional(),
 });
 
+const captchaTokenOptions = (captchaToken: string | undefined) =>
+  captchaToken ? { captchaToken } : {};
+
 type Flow = z.infer<typeof shared>["flow"];
 
 type FlowTokenResult =
@@ -89,12 +92,15 @@ async function prepareNewAccountTrial(
   method: NewAccountAuthMethod,
 ) {
   if (!isConfirmedNewAccount(session.user, method)) {
-    return { needsTrialCheckout: false, session };
+    return { createdAccount: false, needsTrialCheckout: false, session };
   }
 
   let result: Awaited<ReturnType<typeof ensureNewAccountTrial>>;
   try {
     await claimPendingReferral(supabase);
+    if (flow === "desktop") {
+      return { createdAccount: true, needsTrialCheckout: false, session };
+    }
     result = await ensureNewAccountTrial(session.access_token);
   } catch (error) {
     captureOperationalError(error, {
@@ -106,6 +112,7 @@ async function prepareNewAccountTrial(
       },
     });
     return {
+      createdAccount: true,
       needsTrialCheckout: shouldOfferNewAccountTrialCheckoutFallback({
         flow,
         method,
@@ -116,7 +123,7 @@ async function prepareNewAccountTrial(
   }
 
   if (flow !== "web" || result !== "started") {
-    return { needsTrialCheckout: false, session };
+    return { createdAccount: true, needsTrialCheckout: false, session };
   }
 
   const { data, error } = await supabase.auth.refreshSession({
@@ -134,10 +141,14 @@ async function prepareNewAccountTrial(
         },
       },
     );
-    return { needsTrialCheckout: false, session };
+    return { createdAccount: true, needsTrialCheckout: false, session };
   }
 
-  return { needsTrialCheckout: false, session: data.session };
+  return {
+    createdAccount: true,
+    needsTrialCheckout: false,
+    session: data.session,
+  };
 }
 
 function buildAuthCallbackParams(
@@ -337,6 +348,7 @@ export const doMagicLinkAuth = createServerFn({ method: "POST" })
   .inputValidator(
     shared.extend({
       email: z.string().email(),
+      captchaToken: z.string().min(1).max(4096).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -350,6 +362,7 @@ export const doMagicLinkAuth = createServerFn({ method: "POST" })
     const { error } = await supabase.auth.signInWithOtp({
       email: data.email,
       options: {
+        ...captchaTokenOptions(data.captchaToken),
         emailRedirectTo: buildAuthCallbackUrl(params),
       },
     });
@@ -454,7 +467,11 @@ export const exchangeOAuthCode = createServerFn({ method: "POST" })
     if (!data.type || shouldRememberOtpSignIn(data.type)) {
       rememberSessionSignInMethod(authData.session, data.method);
     }
-    return { ...response, newAccount: trial.needsTrialCheckout };
+    return {
+      ...response,
+      newAccount: trial.needsTrialCheckout,
+      createdAccount: trial.createdAccount,
+    };
   });
 
 export const doPasswordSignUp = createServerFn({ method: "POST" })
@@ -463,6 +480,7 @@ export const doPasswordSignUp = createServerFn({ method: "POST" })
       name: z.string().trim().min(1).max(100),
       email: z.string().email(),
       password: z.string().min(6),
+      captchaToken: z.string().min(1).max(4096).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -477,6 +495,7 @@ export const doPasswordSignUp = createServerFn({ method: "POST" })
       email: data.email,
       password: data.password,
       options: {
+        ...captchaTokenOptions(data.captchaToken),
         data: {
           full_name: data.name,
           name: data.name,
@@ -509,7 +528,11 @@ export const doPasswordSignUp = createServerFn({ method: "POST" })
         return response;
       }
       rememberSessionSignInMethod(authData.session, "email");
-      return { ...response, newAccount: trial.needsTrialCheckout };
+      return {
+        ...response,
+        newAccount: trial.needsTrialCheckout,
+        createdAccount: trial.createdAccount,
+      };
     }
 
     return {
@@ -524,6 +547,7 @@ export const doPasswordSignIn = createServerFn({ method: "POST" })
     shared.extend({
       email: z.string().email(),
       password: z.string().min(1),
+      captchaToken: z.string().min(1).max(4096).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -536,6 +560,7 @@ export const doPasswordSignIn = createServerFn({ method: "POST" })
     const { data: authData, error } = await supabase.auth.signInWithPassword({
       email: data.email,
       password: data.password,
+      options: captchaTokenOptions(data.captchaToken),
     });
 
     if (error) {
@@ -620,7 +645,11 @@ export const exchangeOtpToken = createServerFn({ method: "POST" })
     if (shouldRememberOtpSignIn(data.type)) {
       rememberSessionSignInMethod(authData.session, "email");
     }
-    return { ...response, newAccount: trial.needsTrialCheckout };
+    return {
+      ...response,
+      newAccount: trial.needsTrialCheckout,
+      createdAccount: trial.createdAccount,
+    };
   });
 
 export const createDesktopSession = createServerFn({ method: "POST" }).handler(
@@ -647,6 +676,7 @@ export const doPasswordResetRequest = createServerFn({ method: "POST" })
       flow: z.enum(["desktop", "web"]).default("web"),
       scheme: desktopSchemeSchema.optional(),
       redirect: z.string().optional(),
+      captchaToken: z.string().min(1).max(4096).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -659,6 +689,7 @@ export const doPasswordResetRequest = createServerFn({ method: "POST" })
     params.set("type", "recovery");
 
     const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
+      ...captchaTokenOptions(data.captchaToken),
       redirectTo: buildAuthCallbackUrl(params),
     });
 

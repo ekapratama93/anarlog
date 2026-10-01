@@ -221,15 +221,12 @@ describe("SettingsSync", () => {
 
   afterEach(cleanup);
 
-  it("shows sync status and encryption state", async () => {
+  it("shows sync status", async () => {
     renderSettings();
 
     expect(await screen.findByText("Synced")).toBeTruthy();
     expect(screen.getByRole("switch", { name: "Cloud sync" })).toBeTruthy();
-    expect(screen.getByText("End-to-end encryption")).toBeTruthy();
-    expect(
-      screen.getByText(/Keep synced notes readable only on your devices/),
-    ).toBeTruthy();
+    expect(screen.queryByText("End-to-end encryption")).toBeNull();
     expect(screen.queryByText(/conflicted copies/)).toBeNull();
   });
 
@@ -254,7 +251,7 @@ describe("SettingsSync", () => {
     expect(await screen.findByText("No devices registered yet.")).toBeTruthy();
   });
 
-  it("approves a pending device without sharing the recovery key", async () => {
+  it("shows automatic enrollment without requiring an approval button", async () => {
     mocks.requestSyncDevices.mockResolvedValue({
       devices: [],
       pendingDevices: [
@@ -272,24 +269,9 @@ describe("SettingsSync", () => {
     });
     renderSettings();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-
-    await vi.waitFor(() =>
-      expect(mocks.sealE2eeRecoveryKeyForDevice).toHaveBeenCalledWith(
-        "user-1",
-        "11111111-1111-4111-8111-111111111111",
-        "A".repeat(43),
-      ),
-    );
-    expect(mocks.sealDeviceEnrollment).toHaveBeenCalledWith({
-      accessToken: "token",
-      requestId: "11111111-1111-4111-8111-111111111111",
-      packageValue: {
-        ephemeralPublicKey: "E".repeat(43),
-        nonce: "N".repeat(32),
-        ciphertext: "C".repeat(100),
-      },
-    });
+    expect(await screen.findByText("Connecting automatically")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(mocks.sealE2eeRecoveryKeyForDevice).not.toHaveBeenCalled();
   });
 
   it("shows this-device as a chip and disconnects other devices", async () => {
@@ -334,49 +316,6 @@ describe("SettingsSync", () => {
         "other-device",
       ),
     );
-  });
-
-  it("shows mobile and watch icons when those device kinds are present", async () => {
-    mocks.requestSyncDevices.mockResolvedValue({
-      devices: [
-        {
-          deviceFingerprint: "current-device",
-          deviceName: "Johns-M4-Max.local",
-          deviceKind: "desktop",
-          createdAt: "2026-08-20T00:00:00Z",
-          lastSeenAt: "2026-08-20T00:00:00Z",
-        },
-        {
-          deviceFingerprint: "phone-device",
-          deviceName: "iPhone",
-          deviceKind: "mobile",
-          createdAt: "2026-08-19T00:00:00Z",
-          lastSeenAt: "2026-08-19T00:00:00Z",
-        },
-        {
-          deviceFingerprint: "watch-device",
-          deviceName: "Apple Watch",
-          deviceKind: "watch",
-          createdAt: "2026-08-18T00:00:00Z",
-          lastSeenAt: "2026-08-18T00:00:00Z",
-        },
-      ],
-      pendingDevices: [],
-      maxDevices: 5,
-    });
-    renderSettings();
-
-    expect(await screen.findByText("iPhone")).toBeTruthy();
-    expect(screen.getByText("Apple Watch")).toBeTruthy();
-    expect(
-      document.querySelectorAll("[data-device-kind='desktop']"),
-    ).toHaveLength(1);
-    expect(
-      document.querySelectorAll("[data-device-kind='mobile']"),
-    ).toHaveLength(1);
-    expect(
-      document.querySelectorAll("[data-device-kind='watch']"),
-    ).toHaveLength(1);
   });
 
   it("renames the current device and refreshes the synced device list", async () => {
@@ -452,12 +391,12 @@ describe("SettingsSync", () => {
     );
   });
 
-  it("keeps recovery-key import available while approval is pending", async () => {
+  it("keeps recovery-key import available while automatic enrollment is pending", async () => {
     mocks.credentialBlock = "approval_pending";
     mocks.getE2eeIdentityStatus.mockResolvedValue({ configured: false });
     renderSettings();
 
-    expect(await screen.findByText("Waiting for device approval")).toBeTruthy();
+    expect(await screen.findByText("Connecting this device")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Use recovery key instead" }),
     ).toBeTruthy();
@@ -545,48 +484,22 @@ describe("SettingsSync", () => {
     expect(mocks.applyCloudsyncPreference).toHaveBeenCalledWith(mocks.session);
   });
 
-  it("repairs macOS Keychain access and retries cloud sync", async () => {
-    mocks.credentialBlock = "keychain_access";
-    mocks.getE2eeIdentityStatus
-      .mockRejectedValueOnce(
-        "macOS couldn't access your login Keychain. Use “Repair Keychain Access” below, then try again.",
-      )
-      .mockResolvedValue({ configured: true });
-    renderSettings();
+  it.each([
+    ["keychain_access", "macOS couldn't access your login Keychain."],
+    ["unavailable", "E2EE recovery key read timed out"],
+  ] as const)(
+    "does not offer Keychain repair for %s failures",
+    async (credentialBlock, rejection) => {
+      mocks.credentialBlock = credentialBlock;
+      mocks.getE2eeIdentityStatus.mockRejectedValue(rejection);
+      renderSettings();
 
-    const repair = await screen.findByRole("button", {
-      name: "Repair Keychain Access",
-    });
-    expect(screen.getByText(/could not access your recovery key/)).toBeTruthy();
-    fireEvent.click(repair);
-
-    await vi.waitFor(() =>
-      expect(mocks.repairKeychainAccess).toHaveBeenCalledOnce(),
-    );
-    await vi.waitFor(() =>
-      expect(mocks.getE2eeIdentityStatus).toHaveBeenCalledTimes(2),
-    );
-    await vi.waitFor(() =>
-      expect(mocks.setSettingValue).toHaveBeenCalledWith(
-        "cloud_sync_enabled",
-        true,
-      ),
-    );
-  });
-
-  it("does not offer Keychain repair for generic sync failures", async () => {
-    mocks.credentialBlock = "unavailable";
-    mocks.getE2eeIdentityStatus.mockRejectedValue(
-      "E2EE recovery key read timed out",
-    );
-
-    renderSettings();
-
-    expect(await screen.findByText("Sync needs attention")).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: "Repair Keychain Access" }),
-    ).toBeNull();
-  });
+      expect(await screen.findByText("Sync needs attention")).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: "Repair Keychain Access" }),
+      ).toBeNull();
+    },
+  );
 
   it("explains a stalled activation with the native configuration error", async () => {
     mocks.credentialBlock = "activation_failed";

@@ -22,14 +22,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@floating-ui/dom": "^1.7.6",
-    "@handlewithcare/react-prosemirror": "^3.2.6",
     "@anlg/plugin-opener2": "workspace:*",
     "@anlg/store": "workspace:*",
     "@anlg/ui": "workspace:^",
     "@anlg/utils": "workspace:^",
+    "@floating-ui/dom": "^1.7.6",
+    "@handlewithcare/react-prosemirror": "^3.2.6",
     "facehash": "^0.0.7",
-    "markdown-it": "^14.2.0",
+    "markdown-it": "^14.3.1",
+    "node-emoji": "2.2.0",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-dropcursor": "^1.8.2",
     "prosemirror-gapcursor": "1.4.0",
@@ -41,9 +42,12 @@
     "prosemirror-schema-list": "^1.5.1",
     "prosemirror-search": "^1.1.0",
     "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.0",
     "prosemirror-view": "^1.41.7",
     "tlds": "^1.261.0",
-    "usehooks-ts": "^3.1.1"
+    "usehooks-ts": "^3.1.1",
+    "y-prosemirror": "1.3.7",
+    "yjs": "13.6.32"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

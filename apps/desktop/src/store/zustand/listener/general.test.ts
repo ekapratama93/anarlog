@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { toast } from "@anlg/ui/components/ui/toast";
 
 const {
+  acknowledgeStoppedCaptureMock,
   dispatchEventMock,
   getIdentifierMock,
   getCaptureSnapshotMock,
@@ -11,6 +12,7 @@ const {
   listenCaptureLifecycleMock,
   listenCaptureStatusMock,
   listMicUsingApplicationsMock,
+  prepareSessionPeaksMock,
   runEventHooksMock,
   setRecordingIndicatorMock,
   startCaptureMock,
@@ -18,6 +20,7 @@ const {
   stopTranscriptionMock,
   vaultBaseMock,
 } = vi.hoisted(() => ({
+  acknowledgeStoppedCaptureMock: vi.fn(),
   dispatchEventMock: vi.fn(),
   getIdentifierMock: vi.fn(),
   getCaptureSnapshotMock: vi.fn(),
@@ -25,12 +28,17 @@ const {
   listenCaptureLifecycleMock: vi.fn(),
   listenCaptureStatusMock: vi.fn(),
   listMicUsingApplicationsMock: vi.fn(),
+  prepareSessionPeaksMock: vi.fn(),
   runEventHooksMock: vi.fn(),
   setRecordingIndicatorMock: vi.fn(),
   startCaptureMock: vi.fn(),
   stopCaptureMock: vi.fn(),
   stopTranscriptionMock: vi.fn(),
   vaultBaseMock: vi.fn(),
+}));
+
+vi.mock("~/audio-player/waveform", () => ({
+  prepareSessionPeaks: prepareSessionPeaksMock,
 }));
 
 vi.mock("~/stt/speaker-context-capture", () => ({
@@ -75,6 +83,7 @@ vi.mock("@anlg/plugin-settings", () => ({
 
 vi.mock("@anlg/plugin-transcription", () => ({
   commands: {
+    acknowledgeStoppedCapture: acknowledgeStoppedCaptureMock,
     getCaptureSnapshot: getCaptureSnapshotMock,
     setMicMuted: vi.fn(),
     startCapture: startCaptureMock,
@@ -127,6 +136,10 @@ describe("General Listener Slice", () => {
         requestedLiveTranscription: null,
         state: "inactive",
       },
+    });
+    acknowledgeStoppedCaptureMock.mockResolvedValue({
+      status: "ok",
+      data: null,
     });
     listenCaptureDataMock.mockResolvedValue(() => {});
     listenCaptureLifecycleMock.mockResolvedValue(() => {});
@@ -205,6 +218,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "previous",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/previous.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -212,6 +226,7 @@ describe("General Listener Slice", () => {
         },
       });
       expect(onStopped).toHaveBeenCalledOnce();
+      expect(prepareSessionPeaksMock).toHaveBeenCalledWith("previous");
       expect(store.getState().live.postStopProcessingBySession.previous).toBe(
         true,
       );
@@ -281,13 +296,6 @@ describe("General Listener Slice", () => {
       expect(state.live.needsBatchRepair).toBe(false);
       expect(state.live.postStopProcessingBySession).toEqual({});
       expect(state.batch).toEqual({});
-    });
-  });
-
-  describe("Amplitude Updates", () => {
-    test("amplitude state is initialized to zero", () => {
-      const state = store.getState();
-      expect(state.live.amplitude).toEqual({ mic: 0, speaker: 0 });
     });
   });
 
@@ -906,11 +914,6 @@ describe("General Listener Slice", () => {
   });
 
   describe("Stop Action", () => {
-    test("stop action exists and is callable", () => {
-      const stop = store.getState().stop;
-      expect(typeof stop).toBe("function");
-    });
-
     test("marks batch transcription stopped as soon as native cancellation succeeds", async () => {
       store.getState().handleBatchStarted("session-1");
 
@@ -988,6 +991,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1234,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -995,8 +999,15 @@ describe("General Listener Slice", () => {
         },
       });
       expect(dispatchEventMock).not.toHaveBeenCalled();
+      expect(acknowledgeStoppedCaptureMock).not.toHaveBeenCalled();
 
       finishPostStopProcessing?.();
+      await vi.waitFor(() =>
+        expect(acknowledgeStoppedCaptureMock).toHaveBeenCalledWith(
+          "session-a",
+          1234,
+        ),
+      );
       await vi.waitFor(() =>
         expect(dispatchEventMock).toHaveBeenCalledWith(
           "meeting.completed",
@@ -1004,14 +1015,39 @@ describe("General Listener Slice", () => {
         ),
       );
     });
+    test("attachLiveSession restores timer, mute and degraded state from the native snapshot", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:20:00Z"));
+      getCaptureSnapshotMock.mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          activeSessionId: "session-a",
+          finalizingSessionIds: [],
+          liveTranscriptionActive: true,
+          requestedLiveTranscription: true,
+          state: "active",
+          startedAtMs: new Date("2026-01-01T00:00:00Z").getTime(),
+          micMuted: true,
+          degraded: { type: "connection_timeout" },
+        },
+      });
+
+      try {
+        await store.getState().attachLiveSession("session-a");
+
+        const live = store.getState().live;
+        expect(live.status).toBe("active");
+        expect(live.seconds).toBe(20 * 60);
+        expect(live.muted).toBe(true);
+        expect(live.degraded).toEqual({ type: "connection_timeout" });
+      } finally {
+        clearInterval(store.getState().live.intervalId);
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("Start Action", () => {
-    test("start action exists and is callable", () => {
-      const start = store.getState().start;
-      expect(typeof start).toBe("function");
-    });
-
     test("attachLiveSession hydrates the active native capture for the same session", async () => {
       getCaptureSnapshotMock.mockResolvedValueOnce({
         status: "ok",
@@ -1079,6 +1115,7 @@ describe("General Listener Slice", () => {
       const stopped = {
         type: "stopped",
         session_id: "session-a",
+        stopped_at_ms: 1000,
         audio_path: "/tmp/session.wav",
         requested_live_transcription: true,
         live_transcription_active: true,
@@ -1167,6 +1204,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -1330,6 +1368,7 @@ describe("General Listener Slice", () => {
               | {
                   type: "stopped";
                   session_id: string;
+                  stopped_at_ms: number;
                   audio_path: string;
                   requested_live_transcription: boolean;
                   live_transcription_active: boolean;
@@ -1394,6 +1433,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -1452,6 +1492,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -1496,6 +1537,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -1507,6 +1549,13 @@ describe("General Listener Slice", () => {
       expect(consoleError).toHaveBeenCalledWith(
         "[listener] post-stop processing failed",
         error,
+      );
+      expect(acknowledgeStoppedCaptureMock).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(dispatchEventMock).toHaveBeenCalledWith(
+          "meeting.completed",
+          "session-a",
+        ),
       );
       await vi.waitFor(() =>
         expect(store.getState().canStartLiveSession("session-a")).toBe(true),
@@ -1560,6 +1609,7 @@ describe("General Listener Slice", () => {
         payload: {
           type: "stopped",
           session_id: "session-a",
+          stopped_at_ms: 1000,
           audio_path: "/tmp/session.wav",
           requested_live_transcription: true,
           live_transcription_active: true,
@@ -2252,6 +2302,42 @@ describe("General Listener Slice", () => {
       expect(stopCaptureMock).not.toHaveBeenCalled();
     });
 
+    test("keeps storage warnings out of shared live errors", async () => {
+      await store.getState().start({
+        session_id: "session-a",
+        languages: [],
+        onboarding: false,
+        model: "test-model",
+        base_url: "http://localhost",
+        api_key: "test-key",
+        keywords: [],
+      });
+      const handler =
+        listenCaptureStatusMock.mock.calls[
+          listenCaptureStatusMock.mock.calls.length - 1
+        ]?.[0];
+      handler?.({
+        payload: {
+          type: "audio_error",
+          session_id: "session-a",
+          error: "audio_saving_delayed: low disk",
+          is_fatal: false,
+          device: null,
+        },
+      });
+      handler?.({
+        payload: {
+          type: "audio_error",
+          session_id: "session-a",
+          error: "audio_disk_low",
+          is_fatal: false,
+          device: null,
+        },
+      });
+      expect(store.getState().live.lastError).toBeNull();
+      expect(stopCaptureMock).not.toHaveBeenCalled();
+    });
+
     test("preserves explicit audio errors when capture startup fails", async () => {
       const consoleError = vi
         .spyOn(console, "error")
@@ -2403,6 +2489,7 @@ describe("General Listener Slice", () => {
       const stopped = {
         type: "stopped",
         session_id: "session-a",
+        stopped_at_ms: 1000,
         audio_path: "/tmp/session.wav",
         requested_live_transcription: true,
         live_transcription_active: true,

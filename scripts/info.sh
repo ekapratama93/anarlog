@@ -3,10 +3,19 @@
 stable_user_id=""
 stable_version=""
 
-if [ -d "$HOME/Library/Application Support/hyprnote" ]; then
-    if [ -f "$HOME/Library/Application Support/hyprnote/store.json" ]; then
-        stable_user_id=$(jq -r '."auth-user-id" // empty' "$HOME/Library/Application Support/hyprnote/store.json")
-    fi
+app_support="$HOME/Library/Application Support"
+has_app_data() {
+    [ -n "$(ls -A "$1" 2>/dev/null)" ]
+}
+
+# Mirrors resolve_app_folder in crates/storage/src/global.rs.
+stable_app_folder="$app_support/anarlog"
+if has_app_data "$app_support/hyprnote" && ! has_app_data "$app_support/anarlog"; then
+    stable_app_folder="$app_support/hyprnote"
+fi
+
+if [ -f "$stable_app_folder/store.json" ]; then
+    stable_user_id=$(jq -r '."auth-user-id" // empty' "$stable_app_folder/store.json")
 fi
 
 if [ -d "/Applications/Anarlog.app" ]; then

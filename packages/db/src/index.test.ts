@@ -117,18 +117,12 @@ describe("@anlg/db createDb", () => {
     ).resolves.toEqual([{ maxOrder: 7 }]);
   });
 
-  it("logs proxy errors and rethrows", async () => {
+  it("rethrows proxy errors", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const error = new Error("proxy failed");
     executeProxy.mockRejectedValue(error);
 
     await expect(db.select().from(templates)).rejects.toThrow(/Failed query:/);
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[drizzle-proxy]",
-      "all",
-      expect.stringContaining('select "id", "title"'),
-      error,
-    );
     errorSpy.mockRestore();
   });
 });

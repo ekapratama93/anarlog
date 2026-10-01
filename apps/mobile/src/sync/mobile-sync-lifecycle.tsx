@@ -4,6 +4,7 @@ import { activateMobileAttachmentUploads } from "@/attachment-sync/upload-runner
 import { retryPendingTranscriptions } from "@/data/transcribe";
 import { useMountEffect } from "@/lib/use-mount-effect";
 import { shouldSyncAfterAppStateChange } from "@/sync/app-state";
+import { activateMobileBackgroundSync } from "@/sync/background-sync";
 import {
   activateMobileSync,
   getMobileSyncSnapshot,
@@ -21,12 +22,16 @@ export function MobileSyncLifecycle({
   syncEnabled: boolean;
 }) {
   useMountEffect(() => {
-    // Claiming the local database for an account is the user's call, so a
-    // signed-in Pro session alone never starts sync.
     const deactivate = syncEnabled
       ? activateMobileSync({ accessToken, accountUserId })
       : () => {};
-    const uploads = activateMobileAttachmentUploads({ accessToken });
+    const background = syncEnabled
+      ? activateMobileBackgroundSync()
+      : { refresh: () => {}, stop: () => {} };
+    const uploads = activateMobileAttachmentUploads({
+      accessToken,
+      onActivity: background.refresh,
+    });
     let transcriptionRetryTimer: ReturnType<typeof setInterval> | undefined;
     let syncWasReady = false;
     const retryPending = () => {
@@ -47,6 +52,7 @@ export function MobileSyncLifecycle({
       }
       if (syncReady && !syncWasReady) retryPending();
       syncWasReady = syncReady;
+      background.refresh();
     };
     const unsubscribeSync = subscribeMobileSync(updateUploads);
     let previousState = AppState.currentState;
@@ -66,6 +72,7 @@ export function MobileSyncLifecycle({
       subscription.remove();
       unsubscribeSync();
       uploads.stop();
+      background.stop();
       deactivate();
     };
   });

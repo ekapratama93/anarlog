@@ -322,6 +322,7 @@ fn build_listen_params(
         num_speakers: params.num_speakers,
         min_speakers: params.min_speakers,
         max_speakers: params.max_speakers,
+        mic_num_speakers: None,
         custom_query: None,
     }
 }
@@ -425,118 +426,89 @@ mod tests {
     }
 
     #[test]
-    fn build_listen_params_preserves_num_speakers() {
+    fn build_listen_params_preserves_speaker_options() {
         let mut params = batch_params(BatchProvider::Pyannote, "https://api.pyannote.ai");
         params.num_speakers = Some(3);
-
-        let listen_params = build_listen_params(&params, 2, 48_000);
-
-        assert_eq!(listen_params.num_speakers, Some(3));
-        assert_eq!(listen_params.channels, 2);
-        assert_eq!(listen_params.sample_rate, 48_000);
-    }
-
-    #[test]
-    fn build_listen_params_preserves_speaker_range_options() {
-        let mut params = batch_params(BatchProvider::Pyannote, "https://api.pyannote.ai");
         params.min_speakers = Some(2);
         params.max_speakers = Some(4);
 
-        let listen_params = build_listen_params(&params, 1, 16_000);
+        let listen_params = build_listen_params(&params, 2, 48_000);
+        assert_eq!(listen_params.num_speakers, Some(3));
         assert_eq!(listen_params.min_speakers, Some(2));
         assert_eq!(listen_params.max_speakers, Some(4));
+        assert_eq!(listen_params.channels, 2);
+        assert_eq!(listen_params.sample_rate, 48_000);
         assert!(listen_params.custom_query.is_none());
     }
 
     #[test]
-    fn am_routes_pyannote_to_direct_batch() {
-        let params = batch_params(BatchProvider::Am, "https://api.pyannote.ai");
-        let adapter_kind = resolve_batch_adapter_kind(&params, &listen_params(None));
+    fn am_routes_each_backend_to_its_batch_mode() {
+        let cases = [
+            (
+                "https://api.pyannote.ai",
+                None,
+                AdapterKind::Pyannote,
+                false,
+            ),
+            (
+                "https://api.deepgram.com/v1",
+                None,
+                AdapterKind::Deepgram,
+                false,
+            ),
+            ("http://localhost:50060/v1", None, AdapterKind::Argmax, true),
+            (
+                "https://api.openai.com/v1",
+                Some("gpt-4o-transcribe"),
+                AdapterKind::OpenAI,
+                true,
+            ),
+            (
+                "https://api.openai.com/v1",
+                Some("gpt-4o-transcribe-diarize"),
+                AdapterKind::OpenAI,
+                false,
+            ),
+        ];
 
-        assert_eq!(adapter_kind, AdapterKind::Pyannote);
-        assert!(!supports_progressive_batch(adapter_kind, None));
+        for (base_url, model, expected_adapter_kind, expected_progressive) in cases {
+            let params = batch_params(BatchProvider::Am, base_url);
+            let adapter_kind = resolve_batch_adapter_kind(&params, &listen_params(model));
+
+            assert_eq!(adapter_kind, expected_adapter_kind);
+            assert_eq!(
+                supports_progressive_batch(adapter_kind, model),
+                expected_progressive
+            );
+        }
     }
 
     #[test]
-    fn am_routes_deepgram_to_direct_batch() {
-        let params = batch_params(BatchProvider::Am, "https://api.deepgram.com/v1");
-        let adapter_kind = resolve_batch_adapter_kind(&params, &listen_params(None));
+    fn only_local_batches_expect_progressive() {
+        let cases = [
+            (BatchProvider::Anarlog, "https://api.anarlog.so/stt", false),
+            (BatchProvider::Am, "https://api.anarlog.so/stt", false),
+            (BatchProvider::Am, "http://localhost:50060/v1", true),
+        ];
 
-        assert_eq!(adapter_kind, AdapterKind::Deepgram);
-        assert!(!supports_progressive_batch(adapter_kind, None));
+        for (provider, base_url, expected) in cases {
+            assert_eq!(
+                expects_progressive_batch(&batch_params(provider, base_url)),
+                expected
+            );
+        }
     }
 
     #[test]
-    fn am_routes_local_argmax_to_progressive_batch() {
-        let params = batch_params(BatchProvider::Am, "http://localhost:50060/v1");
-        let adapter_kind = resolve_batch_adapter_kind(&params, &listen_params(None));
-
-        assert_eq!(adapter_kind, AdapterKind::Argmax);
-        assert!(supports_progressive_batch(adapter_kind, None));
-    }
-
-    #[test]
-    fn am_routes_openai_gpt_batch_to_progressive_batch() {
-        let params = batch_params(BatchProvider::Am, "https://api.openai.com/v1");
-        let adapter_kind =
-            resolve_batch_adapter_kind(&params, &listen_params(Some("gpt-4o-transcribe")));
-
-        assert_eq!(adapter_kind, AdapterKind::OpenAI);
-        assert!(supports_progressive_batch(
-            adapter_kind,
-            Some("gpt-4o-transcribe"),
-        ));
-    }
-
-    #[test]
-    fn am_routes_openai_diarized_batch_to_direct_batch() {
-        let params = batch_params(BatchProvider::Am, "https://api.openai.com/v1");
-        let adapter_kind =
-            resolve_batch_adapter_kind(&params, &listen_params(Some("gpt-4o-transcribe-diarize")));
-
-        assert_eq!(adapter_kind, AdapterKind::OpenAI);
-        assert!(!supports_progressive_batch(
-            adapter_kind,
-            Some("gpt-4o-transcribe-diarize"),
-        ));
-    }
-
-    #[test]
-    fn cloud_anarlog_batch_is_not_progressive() {
-        let params = batch_params(BatchProvider::Anarlog, "https://api.anarlog.so/stt");
-
-        assert!(!expects_progressive_batch(&params));
-    }
-
-    #[test]
-    fn cloud_am_batch_is_not_progressive() {
-        let params = batch_params(BatchProvider::Am, "https://api.anarlog.so/stt");
-
-        assert!(!expects_progressive_batch(&params));
-    }
-
-    #[test]
-    fn local_am_batch_is_progressive() {
-        let params = batch_params(BatchProvider::Am, "http://localhost:50060/v1");
-
-        assert!(expects_progressive_batch(&params));
-    }
-
-    #[test]
-    fn provider_upload_limit_errors_are_explained() {
-        let message = format_user_friendly_error(
+    fn provider_size_limit_errors_are_explained() {
+        let errors = [
             r#"UnexpectedStatus { status: 400, body: "Audio file exceeds the 25 MB multipart upload limit." }"#,
-        );
-
-        assert!(message.starts_with("This recording is too large"));
-    }
-
-    #[test]
-    fn provider_duration_limit_errors_are_explained() {
-        let message = format_user_friendly_error(
             r#"UnexpectedStatus { status: 400, body: "{\"error\":{\"message\":\"audio duration 1500.012 seconds is longer than 1400 seconds which is the maximum for this model\"}}" }"#,
-        );
+        ];
 
-        assert!(message.starts_with("This recording is too large"));
+        for error in errors {
+            let message = format_user_friendly_error(error);
+            assert!(message.starts_with("This recording is too large"));
+        }
     }
 }

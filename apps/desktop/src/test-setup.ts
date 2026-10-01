@@ -125,6 +125,18 @@ vi.mock("@anlg/plugin-db", () => ({
   suspendCloudsyncForSignOut: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@anlg/plugin-session", () => ({
+  commands: new Proxy({} as Record<string, () => Promise<unknown>>, {
+    get: (target, prop) => {
+      if (typeof prop !== "string") {
+        return undefined;
+      }
+      return (target[prop] ??= () =>
+        Promise.resolve({ status: "ok", data: null }));
+    },
+  }),
+}));
+
 function translate(
   input:
     | TemplateStringsArray
@@ -170,6 +182,12 @@ vi.mock("@lingui/react/macro", () => ({
   useLingui: () => ({
     _: translate,
     t: translate,
+    i18n: {
+      _: translate,
+      locale: "en",
+      date: (value: string | Date, format?: Intl.DateTimeFormatOptions) =>
+        new Date(value).toLocaleDateString("en", format ?? {}),
+    },
   }),
 }));
 
@@ -195,7 +213,12 @@ vi.mock("@lingui/react", () => ({
   useLingui: () => ({
     _: translate,
     t: translate,
-    i18n: { _: translate, locale: "en" },
+    i18n: {
+      _: translate,
+      locale: "en",
+      date: (value: string | Date, format?: Intl.DateTimeFormatOptions) =>
+        new Date(value).toLocaleDateString("en", format ?? {}),
+    },
   }),
 }));
 

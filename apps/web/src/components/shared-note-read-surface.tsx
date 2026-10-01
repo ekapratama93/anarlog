@@ -22,6 +22,7 @@ import {
   getCommentAnchorScreenPositions,
   getSelectionScreenRect,
   NoteEditor,
+  type NoteCollaboration,
   type NoteEditorProps,
   type NoteEditorRef,
   schema,
@@ -108,6 +109,7 @@ function useCommentRailVisible() {
 
 export function SharedNoteReadSurface({
   canCompose,
+  collaboration,
   excludedAttachmentIds = [],
   manageAccess,
   resolveAttachment,
@@ -116,6 +118,8 @@ export function SharedNoteReadSurface({
   snapshot,
 }: {
   canCompose: boolean;
+  /** When set, the surface is editable and bound to the live document. */
+  collaboration?: NoteCollaboration;
   excludedAttachmentIds?: readonly string[];
   manageAccess: boolean;
   resolveAttachment?: SharedAttachmentResolver;
@@ -348,7 +352,7 @@ export function SharedNoteReadSurface({
     );
   };
 
-  if (!editorBodyIsValid) {
+  if (!editorBodyIsValid && !collaboration) {
     return (
       <SharedNoteDocument
         attachments={snapshot.attachments}
@@ -368,6 +372,7 @@ export function SharedNoteReadSurface({
       <SharedReadAttachmentsContext.Provider value={attachmentContext}>
         <NoteEditor
           className="session-note-editor outline-hidden"
+          collaboration={collaboration}
           commentAnchorsEnabled
           enforceTitleHeading={false}
           extraNodeViews={readAttachmentNodeViews}
@@ -381,8 +386,8 @@ export function SharedNoteReadSurface({
             viewRef.current = readyView;
             setView(readyView);
           }}
-          readOnly
-          showFormatToolbar={false}
+          readOnly={!collaboration}
+          showFormatToolbar={collaboration !== undefined}
           showSlashCommand={false}
         />
       </SharedReadAttachmentsContext.Provider>

@@ -16,8 +16,8 @@ import {
   type TranscriptTimingSource,
 } from "~/stt/timing";
 
-export type BatchPhase = "importing" | "transcribing";
-export type BatchTerminalReason = "failed" | "timed_out" | "stopped";
+type BatchPhase = "importing" | "transcribing";
+type BatchTerminalReason = "failed" | "timed_out" | "stopped";
 
 export type BatchState = {
   batch: Record<
@@ -29,6 +29,7 @@ export type BatchState = {
       phase?: BatchPhase;
       terminalReason?: BatchTerminalReason;
       errorCode?: BatchErrorCode;
+      recovered?: boolean;
     }
   >;
   batchPreview: Record<
@@ -43,6 +44,7 @@ export type BatchState = {
 
 export type BatchActions = {
   handleBatchStarted: (sessionId: string, phase?: BatchPhase) => void;
+  handleBatchRecovered: (sessionId: string) => void;
   handleBatchCompleted: (sessionId: string) => void;
   handleBatchResponse: (sessionId: string, response: BatchResponse) => boolean;
   handleBatchResponseStreamed: (
@@ -94,6 +96,21 @@ export const createBatchSlice = <T extends BatchState>(
         [sessionId]: {
           wordsByChannel: {},
           hintsByChannel: {},
+        },
+      },
+    }));
+  },
+
+  handleBatchRecovered: (sessionId) => {
+    set((state) => ({
+      ...state,
+      batch: {
+        ...state.batch,
+        [sessionId]: {
+          percentage: 0,
+          isComplete: false,
+          phase: "transcribing",
+          recovered: true,
         },
       },
     }));
@@ -174,6 +191,7 @@ export const createBatchSlice = <T extends BatchState>(
           terminalReason: undefined,
           error: undefined,
           errorCode: undefined,
+          recovered: state.batch[sessionId]?.recovered,
         },
       },
       batchPreview: {

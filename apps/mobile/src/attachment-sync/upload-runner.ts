@@ -44,6 +44,7 @@ export function requestMobileAttachmentUploads(): void {
 
 export function activateMobileAttachmentUploads(input: {
   accessToken: string;
+  onActivity?: () => void;
 }): {
   resume: () => void;
   pause: () => void;
@@ -87,6 +88,7 @@ export function activateMobileAttachmentUploads(input: {
       const processed = await runMobileAttachmentUploadPass(
         dependencies,
         controller.signal,
+        input.onActivity,
       );
       if (processed === MAX_JOBS_PER_PASS) runAgain = true;
     } catch (error) {
@@ -99,6 +101,7 @@ export function activateMobileAttachmentUploads(input: {
     } finally {
       controller = undefined;
       running = false;
+      input.onActivity?.();
     }
 
     if (enabled && !stopped && runAgain) {
@@ -146,12 +149,14 @@ export function activateMobileAttachmentUploads(input: {
 export async function runMobileAttachmentUploadPass(
   dependencies: RunnerDependencies,
   signal?: AbortSignal,
+  onJobClaimed?: () => void,
 ): Promise<number> {
   await dependencies.store.reconcile();
   let processed = 0;
   while (processed < MAX_JOBS_PER_PASS && !signal?.aborted) {
     const job = await dependencies.store.claimNext();
     if (!job) break;
+    onJobClaimed?.();
     try {
       await runMobileAttachmentUpload(dependencies, job, signal);
     } catch (error) {

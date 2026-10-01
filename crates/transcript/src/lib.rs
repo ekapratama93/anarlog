@@ -1,5 +1,7 @@
+mod batch_refine;
 mod channel_state;
 mod label;
+mod live_materialize;
 mod postprocessor;
 mod processor;
 mod render;
@@ -12,7 +14,18 @@ pub use speaker_context::{
 mod types;
 mod words;
 
+pub use batch_refine::{
+    BatchRefinementOutcome, BatchRefinementRequest, BatchRefinementSource,
+    BatchTranscriptPromotion, SpeakerClusterReconciliationRequest, StoredSpeakerHint,
+    StoredTranscriptWord, parse_stored_speaker_hints, parse_stored_transcript_words,
+    reconcile_refined_speaker_clusters, refine_batch_transcript, render_input_from_stored,
+};
 pub use label::{SpeakerLabelContext, SpeakerLabeler, render_speaker_label};
+pub use live_materialize::{
+    StoredLiveTranscriptDelta, apply_live_transcript_delta, coalesce_live_transcript_deltas,
+    materialize_live_transcript, serialize_batch_transcript_hints,
+    serialize_batch_transcript_words,
+};
 pub use postprocessor::{
     TranscriptPostprocessor, TranscriptPostprocessorError, TranscriptPostprocessorRequest,
     TranscriptPostprocessorResult,

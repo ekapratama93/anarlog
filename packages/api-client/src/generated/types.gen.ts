@@ -499,6 +499,45 @@ export type Document = {
     updated_at: string;
 };
 
+export type DriveConnectionRequest = {
+    connection_id: string;
+};
+
+export type DriveExportFile = {
+    file_id: string;
+    url: string;
+};
+
+export type DriveExportFormat = 'markdown' | 'google_docs';
+
+export type DriveExportRequest = {
+    connection_id: string;
+    file_id: string;
+    filename: string;
+    folder_id: string;
+    format?: DriveExportFormat;
+    markdown: string;
+    meeting_id: string;
+};
+
+export type DriveFolder = {
+    drive_id?: string | null;
+    id: string;
+    name: string;
+};
+
+export type DriveFolderRequest = {
+    connection_id: string;
+    folder_id: string;
+};
+
+export type DrivePrepareExportRequest = {
+    connection_id: string;
+    folder_id: string;
+    format?: DriveExportFormat;
+    meeting_id: string;
+};
+
 export type E2EeDeviceEnrollmentPackage = {
     ciphertext: string;
     ephemeralPublicKey: string;
@@ -1097,6 +1136,15 @@ export type ListenCallbackResponse = {
     request_id: string;
 };
 
+export type LiveCapability = 'editor' | 'viewer';
+
+export type LiveTicketResponse = {
+    capability: LiveCapability;
+    contentRevision: number;
+    expiresInSeconds: number;
+    ticket: string;
+};
+
 export type Location = {
     address?: null | PhysicalAddress;
     coordinates?: null | OutlookGeoCoordinates;
@@ -1121,6 +1169,10 @@ export type Meeting = {
     action_items: Array<ActionItem>;
     created_at: string;
     ended_at: string;
+    /**
+     * Folder path such as `Projects/Launch`; null when the meeting is not in a folder.
+     */
+    folder_path?: string | null;
     id: string;
     kind: string;
     language: string;
@@ -1135,6 +1187,22 @@ export type Meeting = {
     updated_at: string;
 };
 
+export type MeetingDevice = {
+    deviceFingerprint: string;
+    deviceName?: string | null;
+    primary: boolean;
+};
+
+export type MeetingDeviceHeartbeatRequest = {
+    intent: MeetingDeviceIntent;
+};
+
+export type MeetingDeviceIntent = 'present' | 'claim' | 'release';
+
+export type MeetingDevicesResponse = {
+    devices: Array<MeetingDevice>;
+};
+
 export type MeetingExport = Meeting & {
     transcripts: Array<Transcript>;
 };
@@ -1142,6 +1210,10 @@ export type MeetingExport = Meeting & {
 export type MeetingListItem = {
     created_at: string;
     ended_at: string;
+    /**
+     * Folder path such as `Projects/Launch`; null when the meeting is not in a folder.
+     */
+    folder_path?: string | null;
     id: string;
     kind: string;
     series_id: string;
@@ -1335,6 +1407,17 @@ export type PhysicalAddress = {
     postalCode?: string | null;
     state?: string | null;
     street?: string | null;
+};
+
+export type PickerComplete = {
+    code: string;
+    folder_id: string;
+    state: string;
+};
+
+export type PickerStart = {
+    authorization_url: string;
+    state: string;
 };
 
 export type PipelineStatus = 'processing' | 'done' | 'error';
@@ -2800,6 +2883,71 @@ export type ListConnectionsResponses = {
 };
 
 export type ListConnectionsResponse2 = ListConnectionsResponses[keyof ListConnectionsResponses];
+
+export type GoogleDriveExportMarkdownData = {
+    body: DriveExportRequest;
+    path?: never;
+    query?: never;
+    url: '/nango/google-drive/export';
+};
+
+export type GoogleDriveExportMarkdownResponses = {
+    200: DriveExportFile;
+};
+
+export type GoogleDriveExportMarkdownResponse = GoogleDriveExportMarkdownResponses[keyof GoogleDriveExportMarkdownResponses];
+
+export type GoogleDriveValidateFolderData = {
+    body: DriveFolderRequest;
+    path?: never;
+    query?: never;
+    url: '/nango/google-drive/folder';
+};
+
+export type GoogleDriveValidateFolderResponses = {
+    200: DriveFolder;
+};
+
+export type GoogleDriveValidateFolderResponse = GoogleDriveValidateFolderResponses[keyof GoogleDriveValidateFolderResponses];
+
+export type GoogleDrivePickerCompleteData = {
+    body: PickerComplete;
+    path?: never;
+    query?: never;
+    url: '/nango/google-drive/picker-complete';
+};
+
+export type GoogleDrivePickerCompleteResponses = {
+    200: DriveFolder;
+};
+
+export type GoogleDrivePickerCompleteResponse = GoogleDrivePickerCompleteResponses[keyof GoogleDrivePickerCompleteResponses];
+
+export type GoogleDrivePickerStartData = {
+    body: DriveConnectionRequest;
+    path?: never;
+    query?: never;
+    url: '/nango/google-drive/picker-start';
+};
+
+export type GoogleDrivePickerStartResponses = {
+    200: PickerStart;
+};
+
+export type GoogleDrivePickerStartResponse = GoogleDrivePickerStartResponses[keyof GoogleDrivePickerStartResponses];
+
+export type GoogleDrivePrepareExportData = {
+    body: DrivePrepareExportRequest;
+    path?: never;
+    query?: never;
+    url: '/nango/google-drive/prepare-export';
+};
+
+export type GoogleDrivePrepareExportResponses = {
+    200: DriveExportFile;
+};
+
+export type GoogleDrivePrepareExportResponse = GoogleDrivePrepareExportResponses[keyof GoogleDrivePrepareExportResponses];
 
 export type CreateSessionData = {
     body: CreateSessionRequest;
@@ -4850,6 +4998,56 @@ export type GetWorkspaceE2EeKeyRecipientsResponses = {
 
 export type GetWorkspaceE2EeKeyRecipientsResponse = GetWorkspaceE2EeKeyRecipientsResponses[keyof GetWorkspaceE2EeKeyRecipientsResponses];
 
+export type HeartbeatMeetingDeviceData = {
+    body: MeetingDeviceHeartbeatRequest;
+    headers: {
+        /**
+         * Fingerprint of the calling device
+         */
+        'x-device-fingerprint': string;
+    };
+    path: {
+        /**
+         * Opaque key derived from the calendar event
+         */
+        meeting_key: string;
+    };
+    query?: never;
+    url: '/sync/meetings/{meeting_key}/devices';
+};
+
+export type HeartbeatMeetingDeviceErrors = {
+    /**
+     * Invalid meeting key or device fingerprint
+     */
+    400: unknown;
+    /**
+     * Authentication required
+     */
+    401: unknown;
+    /**
+     * Anarlog Pro subscription required
+     */
+    403: unknown;
+    /**
+     * The calling device is not a registered sync device
+     */
+    404: unknown;
+    /**
+     * Device service unavailable
+     */
+    502: unknown;
+};
+
+export type HeartbeatMeetingDeviceResponses = {
+    /**
+     * Devices present for the meeting
+     */
+    200: MeetingDevicesResponse;
+};
+
+export type HeartbeatMeetingDeviceResponse = HeartbeatMeetingDeviceResponses[keyof HeartbeatMeetingDeviceResponses];
+
 export type CreateReplicaCredentialsData = {
     body?: never;
     headers: {
@@ -5046,6 +5244,35 @@ export type GrantSharedAttachmentUploadResponses = {
 };
 
 export type GrantSharedAttachmentUploadResponse = GrantSharedAttachmentUploadResponses[keyof GrantSharedAttachmentUploadResponses];
+
+export type CreateLiveTicketData = {
+    body?: never;
+    path: {
+        /**
+         * Shared note ID
+         */
+        share_id: string;
+    };
+    query?: never;
+    url: '/sync/shares/{share_id}/live/ticket';
+};
+
+export type CreateLiveTicketErrors = {
+    /**
+     * No access to the shared note
+     */
+    403: unknown;
+    /**
+     * Shared note not found
+     */
+    404: unknown;
+};
+
+export type CreateLiveTicketResponses = {
+    200: LiveTicketResponse;
+};
+
+export type CreateLiveTicketResponse = CreateLiveTicketResponses[keyof CreateLiveTicketResponses];
 
 export type PublishSessionShareSnapshotData = {
     body: PublishSessionShareSnapshotRequest;

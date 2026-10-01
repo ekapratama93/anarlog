@@ -180,17 +180,20 @@ mod tests {
 
     #[test]
     fn tail_lines_returns_recent_lines() {
-        let content = "line 1\nline 2\nline 3\nline 4";
-
-        assert_eq!(
-            super::tail_lines(content, 2),
-            vec!["line 3".to_string(), "line 4".to_string()]
-        );
-    }
-
-    #[test]
-    fn tail_lines_handles_zero_limit() {
-        assert!(super::tail_lines("line 1\nline 2", 0).is_empty());
+        for (content, max_lines, expected) in [
+            (
+                "line 1\nline 2\nline 3\nline 4",
+                2,
+                vec!["line 3", "line 4"],
+            ),
+            ("line 1\nline 2", 0, vec![]),
+        ] {
+            assert_eq!(
+                super::tail_lines(content, max_lines),
+                expected.into_iter().map(str::to_string).collect::<Vec<_>>(),
+                "unexpected tail for max_lines={max_lines}"
+            );
+        }
     }
 
     #[test]

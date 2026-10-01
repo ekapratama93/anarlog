@@ -108,83 +108,47 @@ async fn streaming_anarlog_client_accepts_single_proxy_response_object() {
 
 #[tokio::test]
 async fn streaming_anarlog_client_accepts_single_proxy_error_response_object() {
-    let upstream = start_mock_server_with_config(
-        single_response_recording(&sample_error_response(
-            4401,
-            "Invalid credentials.",
-            "deepgram",
-        )),
-        MockUpstreamConfig::default(),
-    )
-    .await
-    .expect("failed to start mock ws server");
-    let proxy = start_proxy(Some(&upstream.ws_url()), None).await;
+    for (error_code, error_message) in [
+        (4401, "Invalid credentials."),
+        (4429, "Too many requests. Please try again later"),
+    ] {
+        let upstream = start_mock_server_with_config(
+            single_response_recording(&sample_error_response(
+                error_code,
+                error_message,
+                "deepgram",
+            )),
+            MockUpstreamConfig::default(),
+        )
+        .await
+        .expect("failed to start mock ws server");
+        let proxy = start_proxy(Some(&upstream.ws_url()), None).await;
 
-    let result = collect_streaming_via_client_result(proxy, "cloud", english(), TIMEOUT).await;
+        let result = collect_streaming_via_client_result(proxy, "cloud", english(), TIMEOUT).await;
 
-    assert_eq!(
-        result.responses.len(),
-        1,
-        "single proxy error objects should produce one client event"
-    );
-    assert!(
-        result.terminal_error.is_none(),
-        "mock close should not leak through once the client received an error response: {:?}",
-        result.terminal_error
-    );
+        assert_eq!(
+            result.responses.len(),
+            1,
+            "single proxy error objects should produce one client event"
+        );
+        assert!(
+            result.terminal_error.is_none(),
+            "mock close should not leak through once the client received an error response: {:?}",
+            result.terminal_error
+        );
 
-    match &result.responses[0] {
-        StreamResponse::ErrorResponse {
-            error_code,
-            error_message,
-            provider,
-        } => {
-            assert_eq!(*error_code, Some(4401));
-            assert_eq!(error_message, "Invalid credentials.");
-            assert_eq!(provider, "deepgram");
+        match &result.responses[0] {
+            StreamResponse::ErrorResponse {
+                error_code: actual_code,
+                error_message: actual_message,
+                provider,
+            } => {
+                assert_eq!(*actual_code, Some(error_code));
+                assert_eq!(actual_message, error_message);
+                assert_eq!(provider, "deepgram");
+            }
+            other => panic!("expected error response, got {other:?}"),
         }
-        other => panic!("expected error response, got {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn streaming_anarlog_client_accepts_single_proxy_rate_limit_error_object() {
-    let upstream = start_mock_server_with_config(
-        single_response_recording(&sample_error_response(
-            4429,
-            "Too many requests. Please try again later",
-            "deepgram",
-        )),
-        MockUpstreamConfig::default(),
-    )
-    .await
-    .expect("failed to start mock ws server");
-    let proxy = start_proxy(Some(&upstream.ws_url()), None).await;
-
-    let result = collect_streaming_via_client_result(proxy, "cloud", english(), TIMEOUT).await;
-
-    assert_eq!(
-        result.responses.len(),
-        1,
-        "single proxy error objects should produce one client event"
-    );
-    assert!(
-        result.terminal_error.is_none(),
-        "mock close should not leak through once the client received an error response: {:?}",
-        result.terminal_error
-    );
-
-    match &result.responses[0] {
-        StreamResponse::ErrorResponse {
-            error_code,
-            error_message,
-            provider,
-        } => {
-            assert_eq!(*error_code, Some(4429));
-            assert_eq!(error_message, "Too many requests. Please try again later");
-            assert_eq!(provider, "deepgram");
-        }
-        other => panic!("expected error response, got {other:?}"),
     }
 }
 

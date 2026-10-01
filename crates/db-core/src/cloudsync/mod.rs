@@ -1,6 +1,7 @@
 mod hook;
 mod interrupt;
 mod ops;
+mod pinned;
 mod runtime;
 mod state;
 mod types;

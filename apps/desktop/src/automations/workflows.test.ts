@@ -6,6 +6,7 @@ import {
 } from "./markdown-export";
 import {
   createEmptyWorkflow,
+  createGoogleDriveWorkflow,
   createWorkflowStep,
   isWorkflowReady,
   parseAutomationWorkflows,
@@ -181,4 +182,48 @@ describe("Markdown workflow options", () => {
     ];
     expect(isWorkflowReady(workflow)).toBe(true);
   });
+});
+
+describe("Google Drive workflows", () => {
+  it("requires a connected folder and the summary-ready trigger", () => {
+    const step = createWorkflowStep("google_drive_export");
+    const workflow = createEmptyWorkflow({ steps: [step] });
+    expect(isWorkflowReady(workflow)).toBe(false);
+    const configured = {
+      ...workflow,
+      steps: [
+        {
+          id: "drive",
+          type: "google_drive_export" as const,
+          connectionId: "connection",
+          target: { id: "folder", name: "Meeting notes" },
+        },
+      ],
+    };
+    expect(isWorkflowReady(configured)).toBe(true);
+    expect(
+      isWorkflowReady({ ...configured, trigger: "meeting_completed" }),
+    ).toBe(false);
+    expect(
+      parseAutomationWorkflows(serializeAutomationWorkflows([configured]))[0],
+    ).toEqual(configured);
+  });
+});
+
+it("creates a disabled Drive starter and preserves Google Docs on reload", () => {
+  const workflow = createGoogleDriveWorkflow("Save meetings to Google Drive");
+  expect(workflow.enabled).toBe(false);
+  expect(workflow.trigger).toBe("note_enhanced");
+  expect(isWorkflowReady(workflow)).toBe(false);
+  const step = workflow.steps[0];
+  if (step.type !== "google_drive_export")
+    throw new Error("Unexpected starter");
+  step.format = "google_docs";
+  step.connectionId = "connection";
+  step.target = { id: "folder", name: "Notes" };
+  const [restored] = parseAutomationWorkflows(
+    serializeAutomationWorkflows([workflow]),
+  );
+  expect(restored.steps[0]).toMatchObject({ format: "google_docs" });
+  expect(isWorkflowReady(restored)).toBe(true);
 });

@@ -52,7 +52,6 @@ vi.mock("~/db", () => ({
 }));
 
 import {
-  applyLiveTranscriptDeltaToDatabase,
   appendTranscriptWordsAndHints,
   assignSessionTranscriptSpeaker,
   assignTranscriptSpeaker,
@@ -61,6 +60,7 @@ import {
   flushLiveTranscriptDeltasToDatabase,
   getSessionParticipantHumanIds,
   getSessionTranscriptRecords,
+  getTranscriptHumans,
   mergeTranscriptSegments,
   removeHumanSpeakerAssignments,
   splitTranscriptSpeaker,
@@ -331,6 +331,23 @@ describe("transcript SQLite queries", () => {
     );
   });
 
+  it("returns no named humans without querying when there are no ids", async () => {
+    await expect(getTranscriptHumans([])).resolves.toEqual([]);
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("loads named humans with unique sorted ids", async () => {
+    mocks.execute.mockResolvedValueOnce([{ id: "human-1", name: "Alice" }]);
+
+    await expect(
+      getTranscriptHumans(["human-2", "human-1", "human-2", ""]),
+    ).resolves.toEqual([{ human_id: "human-1", name: "Alice" }]);
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE id IN (?, ?)"),
+      ["human-1", "human-2"],
+    );
+  });
+
   it("deduplicates and sorts ids before loading named humans", () => {
     mocks.humanRows = [
       { id: "human-1", name: "Alice" },
@@ -472,36 +489,91 @@ describe("transcript SQLite queries", () => {
     expect(statements[1]?.sql).toContain("INSERT INTO transcripts");
   });
 
-  it("appends a live delta without reading or binding canonical blobs", async () => {
-    await applyLiveTranscriptDeltaToDatabase(
-      "transcript-1",
-      liveDelta([
-        {
-          id: "word-2",
-          text: "Hello",
-          start_ms: 200,
-          end_ms: 500,
-          channel: 0,
-          state: "final",
-        },
-      ]),
-    );
+  it("preserves a delta appended after compaction reads its snapshot", async () => {
+    const firstDelta = liveDelta([
+      {
+        id: "word-1",
+        text: "First",
+        start_ms: 0,
+        end_ms: 100,
+        channel: 0,
+        state: "final",
+      },
+    ]);
+    const appendedDelta = liveDelta([
+      {
+        id: "word-2",
+        text: "Second",
+        start_ms: 100,
+        end_ms: 200,
+        channel: 0,
+        state: "final",
+      },
+    ]);
+    let wordsJson = "[]";
+    let hintsJson = "[]";
+    let contentRevision = 0;
+    const deltas = [{ sequence: 0, delta: firstDelta }];
+    let transactionCount = 0;
 
-    expect(mocks.execute).not.toHaveBeenCalled();
-    const statements = mocks.executeTransaction.mock.calls[0]?.[0] as Array<{
-      sql: string;
-      params: unknown[];
-    }>;
-    expect(statements).toHaveLength(3);
-    expect(statements[1]?.sql).toContain("INSERT INTO transcript_live_deltas");
+    const readSnapshot = async () => [
+      {
+        words_json: wordsJson,
+        speaker_hints_json: hintsJson,
+        content_revision: contentRevision,
+        pending_deltas_json: JSON.stringify(deltas.map(({ delta }) => delta)),
+        max_read_sequence:
+          deltas.length > 0 ? deltas[deltas.length - 1]!.sequence : null,
+      },
+    ];
+    mocks.execute
+      .mockImplementationOnce(readSnapshot)
+      .mockImplementationOnce(readSnapshot);
+    const commitSnapshot = async (
+      statements: Array<{
+        sql: string;
+        params: unknown[];
+      }>,
+    ) => {
+      const [update, deleteReadDeltas] = statements;
+      if (transactionCount === 0) {
+        deltas.push({ sequence: 1, delta: appendedDelta });
+      }
+
+      wordsJson = String(update?.params[0]);
+      hintsJson = String(update?.params[1]);
+      contentRevision += 1;
+      const maxSequence = deleteReadDeltas?.params[1];
+      if (typeof maxSequence === "number") {
+        for (let index = deltas.length - 1; index >= 0; index -= 1) {
+          if (deltas[index]!.sequence <= maxSequence) deltas.splice(index, 1);
+        }
+      }
+      transactionCount += 1;
+      return [1, 1, 1];
+    };
+    mocks.executeTransaction
+      .mockImplementationOnce(commitSnapshot)
+      .mockImplementationOnce(commitSnapshot);
+
+    await flushLiveTranscriptDeltasToDatabase("transcript-1");
+
+    const firstTransaction = mocks.executeTransaction.mock.calls[0]?.[0];
+    expect(firstTransaction?.[1]?.sql).toContain("sequence <= ?");
+    expect(firstTransaction?.[1]?.sql).toContain("changes() = 1");
+    expect(firstTransaction?.[1]?.params).toEqual(["transcript-1", 0]);
+    expect(deltas).toEqual([{ sequence: 1, delta: appendedDelta }]);
+    expect(firstTransaction?.[2]?.sql).toContain("NOT EXISTS");
+
+    await flushLiveTranscriptDeltasToDatabase("transcript-1");
+
+    const secondUpdate = mocks.executeTransaction.mock.calls[1]?.[0]?.[0];
     expect(
-      statements.map((statement) => statement.sql).join("\n"),
-    ).not.toContain("words_json");
-    expect(JSON.parse(String(statements[1]?.params[1]))).toEqual(
-      expect.objectContaining({
-        new_words: [expect.objectContaining({ id: "word-2" })],
-      }),
-    );
+      JSON.parse(String(secondUpdate?.params[0])).map(
+        (word: { id: string }) => word.id,
+      ),
+    ).toEqual(["word-1", "word-2"]);
+    expect(deltas).toEqual([]);
   });
 
   it("retries a canonical edit with a small revision token", async () => {
@@ -592,6 +664,7 @@ describe("transcript SQLite queries", () => {
             ["word-old"],
           ),
         ]),
+        max_read_sequence: 0,
       },
     ]);
 

@@ -24,6 +24,7 @@ import { AudioChip } from "@/components/audio-chip";
 import { EditorAccessory } from "@/components/editor-accessory";
 import { FolderPickerSheet } from "@/components/folder-picker-sheet";
 import { ListeningSheet } from "@/components/listening-sheet";
+import { MarkdownView } from "@/components/markdown-view";
 import { NoteActionsSheet } from "@/components/note-actions-sheet";
 import { NoteAttachmentCard } from "@/components/note-attachment-card";
 import { NoteConflictBanner } from "@/components/note-conflict-banner";
@@ -60,6 +61,8 @@ import {
 } from "@/data/session";
 import { sessionView, type SessionViewSelection } from "@/data/session-view";
 import {
+  notifySummarySkipped,
+  SummarySkippedError,
   summarizeSession,
   useAutomaticSummary,
   useSessionSummaryState,
@@ -336,6 +339,7 @@ export default function NoteScreen() {
   const summaryPending =
     summaryState?.status === "pending" || automaticSummary.isFetching;
   const summaryError = summaryState?.error;
+  const summarySkipped = summaryError instanceof SummarySkippedError;
   const needsTranscription =
     Boolean(audio.data) && audio.data?.transcriptStatus !== "complete";
   const localNoteAttachments = noteAttachments.map((attachment) => {
@@ -843,9 +847,7 @@ export default function NoteScreen() {
                       {data.summary.title}
                     </Text>
                   )}
-                  <Text selectable style={styles.summaryText}>
-                    {data.summary.text}
-                  </Text>
+                  <MarkdownView markdown={data.summary.text} />
                 </View>
               )}
               {!data.summary && (
@@ -910,7 +912,7 @@ export default function NoteScreen() {
                     label={
                       !canSummarize
                         ? "Choose summary provider"
-                        : summaryError
+                        : summaryError && !summarySkipped
                           ? "Retry summary"
                           : data.summary
                             ? "Regenerate summary"
@@ -924,7 +926,7 @@ export default function NoteScreen() {
                       canSummarize
                         ? void summarizeSession(id, {
                             beforeGenerate: () => flush(true),
-                          }).catch(() => {})
+                          }).catch((error) => notifySummarySkipped(id, error))
                         : router.push("/settings/summary-provider")
                     }
                   />

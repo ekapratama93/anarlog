@@ -19,6 +19,8 @@ import { commands as fsSyncCommands } from "@anlg/plugin-fs-sync";
 import { commands as miscCommands } from "@anlg/plugin-misc";
 import { toast } from "@anlg/ui/components/ui/toast";
 
+import { startAutomaticDeviceEnrollment } from "./automatic-device-enrollment";
+import { establishAutomaticSyncIdentity } from "./automatic-sync-identity";
 import {
   applyCloudsyncPreference,
   bindCloudsyncAccountForAuth,
@@ -33,6 +35,13 @@ import {
 } from "./cloudsync-progress";
 
 import { getStoredSettingValues } from "~/settings/queries";
+
+vi.mock("./automatic-sync-identity", () => ({
+  establishAutomaticSyncIdentity: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("./automatic-device-enrollment", () => ({
+  startAutomaticDeviceEnrollment: vi.fn(() => vi.fn()),
+}));
 
 vi.mock("./cloudsync-progress", () => ({
   startCloudsyncInitialSyncProgress: vi.fn(),
@@ -332,6 +341,22 @@ describe("CloudSync auth lifecycle", () => {
     expect(configureCloudsyncToken).not.toHaveBeenCalled();
     expect(suspendCloudsync).toHaveBeenCalledTimes(1);
     expect(getCloudsyncCredentialBlock()).toBeNull();
+  });
+
+  test("starts syncing and sharing keys after automatic first-device setup", async () => {
+    vi.mocked(establishAutomaticSyncIdentity).mockResolvedValueOnce(true);
+    vi.mocked(getE2eeIdentityStatus).mockResolvedValueOnce({
+      configured: false,
+      keyId: null,
+      memberPublicKey: null,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(credentialsResponse()));
+    await handleCloudsyncAuthChange("SIGNED_IN", session());
+    expect(configureCloudsyncToken).toHaveBeenCalled();
+    expect(startAutomaticDeviceEnrollment).toHaveBeenCalledWith(
+      "user-id",
+      "supabase-token",
+    );
   });
 
   test("keeps first-device recovery setup separate from enrollment", async () => {
@@ -1492,13 +1517,17 @@ describe("CloudSync auth lifecycle", () => {
     expect(rejectAccountMismatch).toHaveBeenCalledTimes(1);
   });
 
-  test("restarts sync after the authenticated user is updated", async () => {
+  test.each<AuthChangeEvent>([
+    "USER_UPDATED",
+    "PASSWORD_RECOVERY",
+    "MFA_CHALLENGE_VERIFIED",
+  ])("restarts sync after %s", async (event) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(credentialsResponse())),
     );
 
-    await handleCloudsyncAuthChange("USER_UPDATED", session());
+    await handleCloudsyncAuthChange(event, session());
 
     expect(configureCloudsyncToken).toHaveBeenCalledWith(
       "database-id",
@@ -1508,26 +1537,6 @@ describe("CloudSync auth lifecycle", () => {
     );
     expect(suspendCloudsync).toHaveBeenCalledTimes(1);
   });
-
-  test.each<AuthChangeEvent>(["PASSWORD_RECOVERY", "MFA_CHALLENGE_VERIFIED"])(
-    "restarts sync after %s",
-    async (event) => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(() => Promise.resolve(credentialsResponse())),
-      );
-
-      await handleCloudsyncAuthChange(event, session());
-
-      expect(configureCloudsyncToken).toHaveBeenCalledWith(
-        "database-id",
-        "sqlite-token",
-        "user-id",
-        witness(),
-      );
-      expect(suspendCloudsync).toHaveBeenCalledTimes(1);
-    },
-  );
 
   test("suspends sync without deleting local rows before signing out", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(credentialsResponse()));

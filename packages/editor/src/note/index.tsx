@@ -86,6 +86,11 @@ import {
   SlashCommandMenu,
   mentionSkipPlugin,
 } from "../widgets";
+import {
+  collaborationDoc,
+  collaborationPlugins,
+  type NoteCollaboration,
+} from "./collaboration";
 import { buildInputRules, buildKeymap } from "./keymap";
 import {
   LinkedItemOpenBehaviorContext,
@@ -118,6 +123,12 @@ export {
   setCommentAnchors,
 } from "../plugins/comment-anchors";
 export { useLinkedItemOpenBehavior };
+export {
+  isFragmentEmpty,
+  NOTE_FRAGMENT_NAME,
+  type NoteCollaboration,
+  seedFragment,
+} from "./collaboration";
 
 export interface JSONContent {
   type?: string;
@@ -198,6 +209,11 @@ export interface NoteEditorProps {
   commentAnchorsEnabled?: boolean;
   onCommentAnchorsEvent?: (event: CommentAnchorsEvent) => void;
   onCommentSelection?: () => void;
+  /**
+   * Fixed at mount. When set, the shared fragment owns the document and
+   * `initialContent` is not synced into the editor.
+   */
+  collaboration?: NoteCollaboration;
 }
 
 const baseNodeViews = {
@@ -613,6 +629,7 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
       commentAnchorsEnabled = false,
       onCommentAnchorsEvent,
       onCommentSelection,
+      collaboration,
     } = props;
 
     const commentAnchorsEventRef = useRef(onCommentAnchorsEvent);
@@ -751,9 +768,10 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
         buildInputRules(),
         ...(enforceTitleHeading ? [titleHeadingPlugin()] : []),
         taskIdentityPlugin(),
+        ...(collaboration ? collaborationPlugins(collaboration) : []),
         buildKeymap(onNavigateToTitle),
         trailingEmptyLineClickPlugin(),
-        history(),
+        ...(collaboration ? [] : [history()]),
         dropCursor(),
         gapCursor(),
         clipboardPlugin(),
@@ -792,6 +810,7 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
         setCompositionActive,
         commentAnchorsEnabled,
         notifyDocumentChange,
+        collaboration,
       ],
     );
     const nodeViews = useMemo(
@@ -802,11 +821,12 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
     const defaultState = useMemo(() => {
       let doc: PMNode;
       try {
-        doc =
-          reconciledInitialContent && reconciledInitialContent.type === "doc"
+        doc = collaboration
+          ? collaborationDoc(collaboration, schema)
+          : reconciledInitialContent && reconciledInitialContent.type === "doc"
             ? PMNode.fromJSON(schema, reconciledInitialContent)
             : schema.node("doc", null, [schema.node("paragraph")]);
-        if (enforceTitleHeading) {
+        if (enforceTitleHeading && !collaboration) {
           doc = normalizeTitleHeadingDoc(doc);
         }
       } catch {
@@ -817,9 +837,10 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
         ]);
       }
       return EditorState.create({ doc, plugins });
-    }, [reconciledInitialContent, plugins, enforceTitleHeading]);
+    }, [reconciledInitialContent, plugins, enforceTitleHeading, collaboration]);
 
     useEffect(() => {
+      if (collaboration) return;
       let retryTimeout: ReturnType<typeof setTimeout> | undefined;
       let deferredPopup: HTMLElement | undefined;
       let deferredView: EditorView | undefined;
@@ -927,6 +948,7 @@ export const NoteEditor = forwardRef<NoteEditorRef, NoteEditorProps>(
       enforceTitleHeading,
       readOnly,
       onUpdate,
+      collaboration,
     ]);
 
     const onViewReady = useCallback(

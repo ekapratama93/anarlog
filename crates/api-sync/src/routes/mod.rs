@@ -5,6 +5,7 @@ use crate::state::{AppState, ReplicaState};
 mod attachment_backups;
 mod cloudsync_credentials;
 mod e2ee_witness;
+mod live_docs;
 mod session_shares;
 mod shared_attachments;
 
@@ -24,6 +25,7 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
     openapi.merge(attachment_backups::openapi());
     openapi.merge(e2ee_witness::openapi());
     openapi.merge(shared_attachments::openapi());
+    openapi.merge(live_docs::openapi());
     openapi
 }
 
@@ -52,7 +54,14 @@ pub fn e2ee_witness_router(state: ReplicaState) -> Router {
 }
 
 pub fn web_edit_router(state: AppState) -> Router {
-    session_shares::web_edit_router().with_state(state)
+    session_shares::web_edit_router()
+        .merge(live_docs::ticket_router())
+        .with_state(state)
+}
+
+/// Ticket-authenticated WebSocket relay; must not sit behind bearer auth.
+pub fn live_socket_router(state: AppState) -> Router {
+    live_docs::socket_router().with_state(state)
 }
 
 #[cfg(test)]

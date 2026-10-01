@@ -209,9 +209,22 @@ test("waits for the recording hook's connection before auto-starting", () => {
   expect(mocks.startListening).toHaveBeenCalledTimes(1);
 });
 
-test("abandons when the recording connection never becomes ready", async () => {
+test.each([
+  {
+    name: "the recording connection never becomes ready",
+    block: () => {
+      mocks.connectionReady = false;
+    },
+  },
+  {
+    name: "capture readiness never becomes available",
+    block: () => {
+      mocks.canStart = false;
+    },
+  },
+])("abandons a scheduled start when $name", async ({ block }) => {
   vi.useFakeTimers();
-  mocks.connectionReady = false;
+  block();
 
   try {
     render(<ScheduledSessionAutoStart sessionId="session-1" />);
@@ -227,57 +240,28 @@ test("abandons when the recording connection never becomes ready", async () => {
   }
 });
 
-test("abandons a scheduled start that never becomes ready", async () => {
-  vi.useFakeTimers();
-  mocks.canStart = false;
-
-  try {
-    render(<ScheduledSessionAutoStart sessionId="session-1" />);
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(mocks.startListening).not.toHaveBeenCalled();
-    expect(mocks.updateSessionTabState).toHaveBeenCalledWith(tab, {
-      view: null,
-      autoStart: null,
-    });
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-test("abandons when the session loads locked so later meetings can start", () => {
-  mocks.session = {
+test.each([
+  {
+    name: "the session loads locked so later meetings can start",
+    initiallyAvailable: true,
+  },
+  {
+    name: "a pending session becomes locked",
+    initiallyAvailable: false,
+  },
+])("abandons when $name", ({ initiallyAvailable }) => {
+  const lockedSession = {
     ...mocks.session!,
     locked: true,
   };
-
-  render(<ScheduledSessionAutoStart sessionId="session-1" />);
-
-  expect(mocks.startListening).not.toHaveBeenCalled();
-  expect(mocks.updateSessionTabState).toHaveBeenCalledWith(tab, {
-    view: null,
-    autoStart: null,
-  });
-});
-
-test("abandons when a pending session becomes locked", () => {
-  mocks.session = null;
+  mocks.session = initiallyAvailable ? lockedSession : null;
   const view = render(<ScheduledSessionAutoStart sessionId="session-1" />);
 
-  expect(mocks.startListening).not.toHaveBeenCalled();
-
-  mocks.session = {
-    id: "session-1",
-    user_id: "user-1",
-    created_at: "2026-05-15T12:00:00.000Z",
-    folder_id: "",
-    event_json: "",
-    title: "Design Review",
-    raw_md: "",
-    raw_template_id: "",
-    locked: true,
-  };
-  view.rerender(<ScheduledSessionAutoStart sessionId="session-1" />);
+  if (!initiallyAvailable) {
+    expect(mocks.startListening).not.toHaveBeenCalled();
+    mocks.session = lockedSession;
+    view.rerender(<ScheduledSessionAutoStart sessionId="session-1" />);
+  }
 
   expect(mocks.startListening).not.toHaveBeenCalled();
   expect(mocks.updateSessionTabState).toHaveBeenCalledWith(tab, {
