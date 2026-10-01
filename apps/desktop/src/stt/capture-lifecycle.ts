@@ -718,6 +718,15 @@ export function useCaptureLifecycle(sessionId: string) {
         if (result.status === "error") throw new Error(result.error);
         return { incomplete: !result.data };
       };
+      // Without the full recording, the chunks are the only audio left to
+      // transcribe, so they must be repaired instead of released.
+      const repairChunksWithoutRecording = async (audioPath: string | null) => {
+        await recoveryListening;
+        if (!batchFromRetainedAudio || audioPath) return;
+        batchFromRetainedAudio = false;
+        audioRecovery.batchOnly(false);
+        audioRecovery.recoverPending();
+      };
       const marker = async (): Promise<CaptureLifecycleMarker> => ({
         version: 1,
         chunkedAudio: usesChunkedAudio,
@@ -1239,6 +1248,7 @@ export function useCaptureLifecycle(sessionId: string) {
           if (!requiresRetainedBatchAudio(provider, model))
             batchFromRetainedAudio =
               retainAudio && details.requestedLiveTranscription === false;
+          await repairChunksWithoutRecording(details.audioPath);
           const recovery = await stopAudioRecovery().catch((error) => {
             console.error(
               "[listener] failed to delete transcribed audio",
@@ -1334,6 +1344,7 @@ export function useCaptureLifecycle(sessionId: string) {
           return;
         }
         if (usesChunkedAudio) {
+          await repairChunksWithoutRecording(details.audioPath);
           if (!batchFromRetainedAudio) await restoreAudioRecovery();
           const recovery = await stopAudioRecovery();
           details = {

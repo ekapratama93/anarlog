@@ -1017,6 +1017,54 @@ describe("useStartListening", () => {
     expect(runBatchMock).not.toHaveBeenCalled();
   });
 
+  test("repairs retained batch-only chunks when the full recording is missing at stop", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const capturedAt = new Date("2026-07-24T00:00:00.000Z").getTime();
+    vi.setSystemTime(capturedAt);
+    vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          id: "chunk-1",
+          path: "/tmp/chunk-1.ogg",
+          capture_started_at: capturedAt,
+          start_ms: 0,
+          audio_start_ms: 0,
+          end_ms: 60_000,
+        },
+      ],
+    });
+    const { result } = renderHook(() => useStartListening("session-1"));
+    await act(async () => {
+      await result.current();
+    });
+    vi.setSystemTime(capturedAt + 120_000);
+    const lifecycle = vi.mocked(
+      transcriptionEvents.captureLifecycleEvent.listen,
+    ).mock.calls[0]?.[0];
+    lifecycle?.({
+      payload: {
+        type: "started",
+        session_id: "session-1",
+        requested_live_transcription: false,
+        live_transcription_active: false,
+      },
+    } as never);
+    await act(async () => {
+      await startMock.mock.calls[0]?.[1].onStopped("session-1", {
+        chunkedAudio: true,
+        durationSeconds: 120,
+        audioPath: null,
+        requestedLiveTranscription: false,
+        liveTranscriptionActive: false,
+        needsBatchRepair: false,
+      });
+    });
+    expect(runBatchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/tmp/chunk-1.ogg",
+    ]);
+  });
+
   describe("retained batch-only recovery", () => {
     const batchOnlyMarker = {
       version: 1 as const,
@@ -1074,6 +1122,22 @@ describe("useStartListening", () => {
 
       expect(runBatchMock.mock.calls.map(([path]) => path)).toEqual([
         "/tmp/existing-session.mp3",
+      ]);
+    });
+
+    test("repairs leftover chunks after a restart when the full recording is missing", async () => {
+      vi.mocked(transcriptionCommands.listCaptureAudioChunks).mockResolvedValue(
+        { status: "ok", data: [leftoverChunk] },
+      );
+      audioPathMock.mockResolvedValue({
+        status: "error",
+        error: "audio_path_not_found",
+      });
+
+      await recoverStoppedCapture();
+
+      expect(runBatchMock.mock.calls.map(([path]) => path)).toEqual([
+        "/tmp/chunk-1.ogg",
       ]);
     });
 
